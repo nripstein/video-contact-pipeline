@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "thesis-100-doh-pipeline"
+version = "0.1.0"
+description = "Notebook- and CLI-friendly pipeline package for Thesis-100-DOH"
+requires-python = ">=3.8"
+
+[tool.setuptools]
+packages = ["pipeline"]

@@ -61,6 +61,11 @@ pip install scipy=1.1.0
 ## New Pipeline (Batch Capable)
 
 See `QUICKSTART.md` for a concise, runnable guide.
+Notebook setup and workflows are in `docs/NOTEBOOKS.md`, `notebooks/pipeline_starter.ipynb`, and `notebooks/postprocess_only.ipynb`.
+Reproducible notebook bootstrap (recommended):
+```
+scripts/bootstrap_notebook.sh shan_et_al2
+```
 
 ### How to run
 
@@ -87,6 +92,12 @@ results/batch_run/<video_stem>/
 Optional GT barcode overlay:
 ```
 python run_pipeline.py --input /path/to/input --output-dir results/run/ --gt-csv /path/to/gt.csv
+```
+
+Postprocess-only (existing CSVs):
+```
+python run_pipeline.py --barcodes-only --condensed-csv /path/to/detections_condensed.csv --output-dir results/post/
+python run_pipeline.py --annotated-frames-only --full-csv /path/to/detections_full.csv --image-dir /path/to/frames --output-dir results/post/
 ```
 
 Regression testing:

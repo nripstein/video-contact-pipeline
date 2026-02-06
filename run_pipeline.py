@@ -5,13 +5,14 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
-from pipeline import PipelineConfig
-from pipeline.main import prepare_frames, run_pipeline, is_video_file, list_videos
+import pandas as pd
+
+from pipeline.visualization import save_annotated_frames, save_barcodes
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="New pipeline CLI (stub)")
-    parser.add_argument("--input", dest="input_path", required=True)
+    parser.add_argument("--input", dest="input_path", default=None)
     parser.add_argument("--output-dir", dest="output_dir", default=None)
     parser.add_argument("--thresh-hand", type=float, default=0.5)
     parser.add_argument("--thresh-obj", type=float, default=0.5)
@@ -31,11 +32,69 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-progress", action="store_true")
     parser.add_argument("--save-annotated-frames", action="store_true")
     parser.add_argument("--skip-existing", action="store_true")
+    parser.add_argument("--barcodes-only", action="store_true")
+    parser.add_argument("--annotated-frames-only", action="store_true")
+    parser.add_argument("--condensed-csv", default=None)
+    parser.add_argument("--full-csv", default=None)
+    parser.add_argument("--image-dir", default=None)
     return parser.parse_args()
+
+
+def _resolve_postprocess_output_dir(args: argparse.Namespace) -> Path:
+    if args.output_dir:
+        return Path(args.output_dir).expanduser()
+    if args.condensed_csv:
+        return Path(args.condensed_csv).expanduser().parent
+    if args.full_csv:
+        return Path(args.full_csv).expanduser().parent
+    raise ValueError("Could not resolve output dir; set --output-dir.")
+
+
+def _run_postprocess_only(args: argparse.Namespace) -> int:
+    if not args.barcodes_only and not args.annotated_frames_only:
+        return 1
+
+    if args.barcodes_only:
+        if not args.condensed_csv:
+            raise ValueError("--barcodes-only requires --condensed-csv.")
+
+    if args.annotated_frames_only:
+        if not args.full_csv:
+            raise ValueError("--annotated-frames-only requires --full-csv.")
+        image_dir = args.image_dir or args.input_path
+        if not image_dir:
+            raise ValueError("--annotated-frames-only requires --image-dir or --input.")
+
+    output_dir = _resolve_postprocess_output_dir(args)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.barcodes_only:
+        condensed_path = Path(args.condensed_csv).expanduser()
+        condensed_df = pd.read_csv(condensed_path)
+        created = save_barcodes(
+            condensed_df,
+            str(output_dir),
+            gt_csv_path=args.gt_csv_path,
+        )
+        print(f"Generated barcode files: {len(created)}")
+
+    if args.annotated_frames_only:
+        full_path = Path(args.full_csv).expanduser()
+        full_df = pd.read_csv(full_path)
+        created = save_annotated_frames(str(Path(image_dir).expanduser()), full_df, str(output_dir))
+        print(f"Generated annotated frames: {len(created)}")
+
+    return 0
 
 
 def main() -> int:
     args = parse_args()
+    if args.barcodes_only or args.annotated_frames_only:
+        return _run_postprocess_only(args)
+    if not args.input_path:
+        raise ValueError("--input is required unless using --barcodes-only/--annotated-frames-only.")
+    from pipeline import PipelineConfig
+    from pipeline.main import prepare_frames, run_pipeline, list_videos
 
     config = PipelineConfig(
         input_path=args.input_path,

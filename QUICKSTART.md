@@ -6,6 +6,8 @@ This guide covers the new pipeline for single inputs, frames directories, and ba
 - A working Python environment with the repo dependencies installed.
 - C++/CUDA extensions built (`cd lib && CC=/usr/bin/gcc-10 CXX=/usr/bin/g++-10 python setup.py build develop`).
 - Model weights placed under `models/` (see README for the exact folder layout).
+- Notebook workflow: see `docs/NOTEBOOKS.md`, `notebooks/pipeline_starter.ipynb`, and `notebooks/postprocess_only.ipynb`.
+- Reproducible notebook bootstrap: `scripts/bootstrap_notebook.sh shan_et_al2`.
 
 ## Single video
 ```bash
@@ -33,6 +35,17 @@ results/batch_run/<video_stem>/
 - `--no-blue-glove-filter`
 - `--no-object-size-filter`
 - `--obj-bigger-filter --obj-bigger-k 1.0`
+
+## Postprocess-only modes
+Generate barcodes from an existing `detections_condensed.csv`:
+```bash
+python run_pipeline.py --barcodes-only --condensed-csv /path/to/detections_condensed.csv --output-dir /path/to/out
+```
+
+Generate annotated bbox frames from an existing `detections_full.csv`:
+```bash
+python run_pipeline.py --annotated-frames-only --full-csv /path/to/detections_full.csv --image-dir /path/to/frames --output-dir /path/to/out
+```
 
 ## Regression tests
 ```bash
