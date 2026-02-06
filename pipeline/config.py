@@ -42,6 +42,7 @@ class PipelineConfig:
     gt_csv_path: Optional[str] = None
     save_config: bool = True
     show_progress: bool = True
+    save_annotated_frames: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

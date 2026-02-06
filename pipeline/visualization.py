@@ -152,3 +152,78 @@ def save_barcodes(condensed_df: pd.DataFrame,
         created.append(str(pred_vs_gt_path))
 
     return created
+
+
+def _hand_side_to_lr(hand_side: object) -> int:
+    if hand_side == "Right":
+        return 1
+    return 0
+
+
+def save_annotated_frames(image_dir: str, full_df: pd.DataFrame, output_dir: str) -> List[str]:
+    import cv2
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[1]
+    archive_dir = repo_root / "archive"
+    if str(archive_dir) not in sys.path:
+        sys.path.insert(0, str(archive_dir))
+
+    from nr_utils.bbox_draw import draw_presentation_bboxes
+
+    image_dir = Path(image_dir)
+    output_dir = Path(output_dir) / "visualizations" / "frames_det"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    created: List[str] = []
+    for frame_id, group in full_df.groupby("frame_id"):
+        image_path = image_dir / frame_id
+        if not image_path.exists():
+            continue
+        im = cv2.imread(str(image_path))
+        if im is None:
+            continue
+
+        hand_rows = group[group["detection_type"] == "hand"]
+        obj_rows = group[group["detection_type"] == "object"]
+
+        hand_dets = None
+        if not hand_rows.empty:
+            hand_list = []
+            for _, row in hand_rows.iterrows():
+                hand_list.append([
+                    float(row["bbox_x1"]),
+                    float(row["bbox_y1"]),
+                    float(row["bbox_x2"]),
+                    float(row["bbox_y2"]),
+                    float(row["confidence"]) / 100.0,
+                    float(row["contact_state"]),
+                    float(row["offset_x"]),
+                    float(row["offset_y"]),
+                    float(row["offset_mag"]),
+                    float(_hand_side_to_lr(row["hand_side"])),
+                    1.0 if row.get("blue_glove_status", "NA") == "experimenter" else 0.0,
+                ])
+            hand_dets = np.array(hand_list, dtype=np.float32)
+
+        obj_dets = None
+        if not obj_rows.empty:
+            obj_list = []
+            for _, row in obj_rows.iterrows():
+                obj_list.append([
+                    float(row["bbox_x1"]),
+                    float(row["bbox_y1"]),
+                    float(row["bbox_x2"]),
+                    float(row["bbox_y2"]),
+                    float(row["confidence"]) / 100.0,
+                ])
+            obj_dets = np.array(obj_list, dtype=np.float32)
+
+        im = draw_presentation_bboxes(im, obj_dets, hand_dets)
+
+        out_name = f"{Path(frame_id).stem}_det.png"
+        out_path = output_dir / out_name
+        cv2.imwrite(str(out_path), im)
+        created.append(str(out_path))
+
+    return created

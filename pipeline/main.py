@@ -19,7 +19,7 @@ from pipeline.preprocessing import (
     resolve_input_to_image_dir,
     write_preprocessing_meta,
 )
-from pipeline.visualization import save_barcodes
+from pipeline.visualization import save_annotated_frames, save_barcodes
 
 
 def _compute_crop_box(
@@ -163,6 +163,9 @@ def run_single_input(
 
     if single_config.save_visualizations and condensed_df is not None:
         save_barcodes(condensed_df, str(output_dir), gt_csv_path=single_config.gt_csv_path)
+
+    if single_config.save_annotated_frames:
+        save_annotated_frames(image_dir, full_df, str(output_dir))
 
     return full_df, condensed_df
 

@@ -231,3 +231,7 @@ lib/pycocotools/_mask.c
 # AI agent notes
 AGENTS.md
 CLAUDE.MD
+
+# keep models/ directory but ignore its contents
+/models/*
+!/models/.gitkeep

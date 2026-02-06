@@ -29,6 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-visualizations", action="store_true")
     parser.add_argument("--gt-csv", dest="gt_csv_path", default=None)
     parser.add_argument("--no-progress", action="store_true")
+    parser.add_argument("--save-annotated-frames", action="store_true")
     parser.add_argument("--skip-existing", action="store_true")
     return parser.parse_args()
 
@@ -52,6 +53,7 @@ def main() -> int:
         save_visualizations=not args.no_visualizations,
         gt_csv_path=args.gt_csv_path,
         show_progress=not args.no_progress,
+        save_annotated_frames=args.save_annotated_frames,
     )
 
     config_dict = config.to_dict()
