@@ -97,6 +97,15 @@ TEST_INPUT="/path/to/input" scripts/run_parity_suite.sh
 
 Legacy code lives under `archive/` (reference‑only).
 
+### Metrics (quantitative evaluation)
+
+Evaluate condensed predictions against a GT CSV:
+```
+python scripts/evaluate_metrics.py --pred /path/to/detections_condensed.csv --gt /path/to/gt.csv
+```
+
+This reports MoF (frame-wise accuracy), Edit score, and F1@{10,25,50,75}.
+
 ## Provenance
 This repository is adapted from the [100‑DOH Repository](https://github.com/ddshan/hand_object_detector),
 the code for *Understanding Human Hands in Contact at Internet Scale* (CVPR 2020, Oral).
