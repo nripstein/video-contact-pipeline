@@ -5,7 +5,12 @@ from typing import Dict, List
 import pandas as pd
 
 from pipeline.config import PipelineConfig
-from pipeline.filters import apply_blue_glove_filter, apply_object_size_filter, apply_obj_bigger_than_hand_filter
+from pipeline.filters import (
+    apply_blue_glove_filter,
+    apply_object_size_filter,
+    apply_obj_bigger_than_hand_filter,
+    apply_obj_smaller_than_hand_filter,
+)
 
 LABEL_PORTABLE = "Portable Object"
 LABEL_STATIONARY = "Stationary Object"
@@ -103,6 +108,8 @@ def apply_detection_filters(full_df: pd.DataFrame, config: PipelineConfig, image
         df = apply_blue_glove_filter(df, config, image_dir)
     if config.object_size_filter:
         df = apply_object_size_filter(df, config, image_dir)
+    if config.obj_smaller_than_hand_filter:
+        df = apply_obj_smaller_than_hand_filter(df, config)
     if config.obj_bigger_than_hand_filter:
         df = apply_obj_bigger_than_hand_filter(df, config)
     return df

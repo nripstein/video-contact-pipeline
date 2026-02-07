@@ -20,6 +20,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-flip", action="store_true")
     parser.add_argument("--obj-bigger-filter", action="store_true")
     parser.add_argument("--obj-bigger-k", type=float, default=1.0)
+    small_obj_group = parser.add_mutually_exclusive_group()
+    small_obj_group.add_argument("--small-object-filter", action="store_true")
+    small_obj_group.add_argument("--no-small-object-filter", action="store_true")
+    parser.add_argument("--obj-smaller-factor", type=float, default=2.0)
     parser.add_argument("--blue-threshold", type=float, default=0.5)
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--preprocess-only", action="store_true")
@@ -96,6 +100,12 @@ def main() -> int:
     from pipeline import PipelineConfig
     from pipeline.main import prepare_frames, run_pipeline, list_videos
 
+    small_object_filter_enabled = False
+    if args.small_object_filter:
+        small_object_filter_enabled = True
+    elif args.no_small_object_filter:
+        small_object_filter_enabled = False
+
     config = PipelineConfig(
         input_path=args.input_path,
         output_dir=args.output_dir,
@@ -105,6 +115,8 @@ def main() -> int:
         flip_vertical=not args.no_flip,
         obj_bigger_than_hand_filter=args.obj_bigger_filter,
         obj_bigger_ratio_k=args.obj_bigger_k,
+        obj_smaller_than_hand_filter=small_object_filter_enabled,
+        obj_smaller_ratio_factor=args.obj_smaller_factor,
         blue_threshold=args.blue_threshold,
         blue_glove_filter=not args.no_blue_glove_filter,
         object_size_filter=not args.no_object_size_filter,

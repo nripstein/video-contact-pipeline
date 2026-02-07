@@ -231,15 +231,7 @@ def _offset_distance(hand_row, obj_row) -> float:
     return float(dist)
 
 
-def apply_obj_bigger_than_hand_filter(full_df: pd.DataFrame, config: PipelineConfig) -> pd.DataFrame:
-    """
-    Relabels portable-object hand detections as No Contact when matched object is larger by ratio.
-    """
-    if full_df.empty:
-        return full_df
-
-    df = full_df.copy()
-
+def _prepare_hand_object_ratio_columns(df: pd.DataFrame) -> None:
     if "contact_label_raw" not in df.columns:
         df["contact_label_raw"] = df["contact_label"]
     if "contact_state_raw" not in df.columns:
@@ -248,6 +240,65 @@ def apply_obj_bigger_than_hand_filter(full_df: pd.DataFrame, config: PipelineCon
     for col in ["matched_object_conf", "matched_object_area", "hand_area", "area_ratio", "obj_match_method"]:
         if col not in df.columns:
             df[col] = None
+
+
+def _best_matched_object_for_hand(hand_row, obj_rows: pd.DataFrame):
+    candidates = []
+    for _, obj in obj_rows.iterrows():
+        conf = float(obj.get("confidence") or 0.0)
+        dist = _offset_distance(hand_row, obj)
+        hand_box = (
+            int(hand_row.get("bbox_x1")),
+            int(hand_row.get("bbox_y1")),
+            int(hand_row.get("bbox_x2")),
+            int(hand_row.get("bbox_y2")),
+        )
+        obj_box = (
+            int(obj.get("bbox_x1")),
+            int(obj.get("bbox_y1")),
+            int(obj.get("bbox_x2")),
+            int(obj.get("bbox_y2")),
+        )
+        iou = _iou(hand_box, obj_box)
+        area = _bbox_area(*obj_box)
+        candidates.append((obj, conf, dist, iou, area, obj_box))
+
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda c: (
+            -c[1],
+            c[2],
+            -c[3],
+            -c[4],
+            c[5][0],
+            c[5][1],
+            c[5][2],
+            c[5][3],
+        )
+    )
+    return candidates[0]
+
+
+def _write_match_details(df: pd.DataFrame, idx: int, conf: float, obj_area: int, hand_area: int) -> None:
+    ratio = (obj_area / hand_area) if hand_area > 0 else None
+    df.at[idx, "matched_object_conf"] = conf
+    df.at[idx, "matched_object_area"] = obj_area
+    df.at[idx, "hand_area"] = hand_area
+    df.at[idx, "area_ratio"] = ratio
+    df.at[idx, "obj_match_method"] = "offset"
+
+
+def apply_obj_bigger_than_hand_filter(full_df: pd.DataFrame, config: PipelineConfig) -> pd.DataFrame:
+    """
+    Relabels portable-object hand detections as No Contact when matched object is larger by ratio.
+    """
+    if full_df.empty:
+        return full_df
+
+    df = full_df.copy()
+    _prepare_hand_object_ratio_columns(df)
 
     for frame_id, frame_df in df.groupby("frame_id"):
         obj_rows = frame_df[(frame_df["detection_type"] == "object") & (frame_df["is_filtered"] == False)]
@@ -262,57 +313,59 @@ def apply_obj_bigger_than_hand_filter(full_df: pd.DataFrame, config: PipelineCon
             if row.get("contact_label") != "Portable Object":
                 continue
 
-            candidates = []
-            for _, obj in obj_rows.iterrows():
-                conf = float(obj.get("confidence") or 0.0)
-                dist = _offset_distance(row, obj)
-                hand_box = (
-                    int(row.get("bbox_x1")),
-                    int(row.get("bbox_y1")),
-                    int(row.get("bbox_x2")),
-                    int(row.get("bbox_y2")),
-                )
-                obj_box = (
-                    int(obj.get("bbox_x1")),
-                    int(obj.get("bbox_y1")),
-                    int(obj.get("bbox_x2")),
-                    int(obj.get("bbox_y2")),
-                )
-                iou = _iou(hand_box, obj_box)
-                area = _bbox_area(*obj_box)
-                candidates.append(
-                    (obj, conf, dist, iou, area, obj_box)
-                )
-
-            if not candidates:
+            best = _best_matched_object_for_hand(row, obj_rows)
+            if best is None:
                 continue
-
-            candidates.sort(
-                key=lambda c: (
-                    -c[1],
-                    c[2],
-                    -c[3],
-                    -c[4],
-                    c[5][0],
-                    c[5][1],
-                    c[5][2],
-                    c[5][3],
-                )
-            )
-            obj, conf, dist, iou, obj_area, obj_box = candidates[0]
+            _, conf, _, _, obj_area, _ = best
 
             hx1, hy1, hx2, hy2 = int(row.get("bbox_x1")), int(row.get("bbox_y1")), int(row.get("bbox_x2")), int(row.get("bbox_y2"))
             hand_area = _bbox_area(hx1, hy1, hx2, hy2)
-            ratio = (obj_area / hand_area) if hand_area > 0 else None
-
-            df.at[idx, "matched_object_conf"] = conf
-            df.at[idx, "matched_object_area"] = obj_area
-            df.at[idx, "hand_area"] = hand_area
-            df.at[idx, "area_ratio"] = ratio
-            df.at[idx, "obj_match_method"] = "offset"
+            _write_match_details(df, idx, conf, obj_area, hand_area)
 
             if hand_area > 0 and obj_area > hand_area * config.obj_bigger_ratio_k:
                 df.at[idx, "contact_label"] = "No Contact"
                 df.at[idx, "contact_state"] = 0
+
+    return df
+
+
+def apply_obj_smaller_than_hand_filter(full_df: pd.DataFrame, config: PipelineConfig) -> pd.DataFrame:
+    """
+    Relabels portable-object hand detections as No Contact when matched object is too large by ratio.
+    """
+    if full_df.empty:
+        return full_df
+
+    df = full_df.copy()
+    _prepare_hand_object_ratio_columns(df)
+    if "small_object_rule_applied" not in df.columns:
+        df["small_object_rule_applied"] = False
+
+    for frame_id, frame_df in df.groupby("frame_id"):
+        obj_rows = frame_df[(frame_df["detection_type"] == "object") & (frame_df["is_filtered"] == False)]
+        if obj_rows.empty:
+            continue
+
+        for idx, row in frame_df.iterrows():
+            if row.get("detection_type") != "hand":
+                continue
+            if row.get("is_filtered") is True:
+                continue
+            if row.get("contact_label") != "Portable Object":
+                continue
+
+            best = _best_matched_object_for_hand(row, obj_rows)
+            if best is None:
+                continue
+            _, conf, _, _, obj_area, _ = best
+
+            hx1, hy1, hx2, hy2 = int(row.get("bbox_x1")), int(row.get("bbox_y1")), int(row.get("bbox_x2")), int(row.get("bbox_y2"))
+            hand_area = _bbox_area(hx1, hy1, hx2, hy2)
+            _write_match_details(df, idx, conf, obj_area, hand_area)
+
+            if hand_area > 0 and obj_area > hand_area * config.obj_smaller_ratio_factor:
+                df.at[idx, "contact_label"] = "No Contact"
+                df.at[idx, "contact_state"] = 0
+                df.at[idx, "small_object_rule_applied"] = True
 
     return df

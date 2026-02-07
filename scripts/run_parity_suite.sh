@@ -14,7 +14,8 @@ NEW_OUT="${REPO_ROOT}/tests/output/new"
 mkdir -p "${OLD_OUT}" "${NEW_OUT}"
 
 python "${REPO_ROOT}/scripts/run_old_pipeline.py" --input "${TEST_INPUT}" --output-dir "${OLD_OUT}"
-python "${REPO_ROOT}/run_pipeline.py" --input "${TEST_INPUT}" --output-dir "${NEW_OUT}" --inference-only --no-crop --no-flip --no-object-size-filter
+# Disable refactor-only filters for legacy parity comparison.
+python "${REPO_ROOT}/run_pipeline.py" --input "${TEST_INPUT}" --output-dir "${NEW_OUT}" --inference-only --no-crop --no-flip --no-object-size-filter --no-small-object-filter
 
 REPO_ROOT="${REPO_ROOT}" python - <<'PY'
 from __future__ import annotations
@@ -60,6 +61,7 @@ subprocess.run(
         str(new_out),
         "--no-crop",
         "--no-flip",
+        "--no-small-object-filter",
     ],
     check=True,
     cwd=repo_root,

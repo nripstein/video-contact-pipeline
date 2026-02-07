@@ -24,6 +24,8 @@ def test_config_json_roundtrip(tmp_path):
         object_size_max_area_ratio=0.5,
         obj_bigger_than_hand_filter=False,
         obj_bigger_ratio_k=1.0,
+        obj_smaller_than_hand_filter=True,
+        obj_smaller_ratio_factor=2.0,
         obj_match_tiebreak="conf_then_dist_then_iou",
         save_full_csv=True,
         save_condensed_csv=True,

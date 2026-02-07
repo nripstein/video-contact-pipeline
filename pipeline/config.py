@@ -33,6 +33,8 @@ class PipelineConfig:
 
     obj_bigger_than_hand_filter: bool = False
     obj_bigger_ratio_k: float = 1.0
+    obj_smaller_than_hand_filter: bool = False
+    obj_smaller_ratio_factor: float = 2.0
 
     obj_match_tiebreak: str = "conf_then_dist_then_iou"
 
