@@ -235,3 +235,6 @@ CLAUDE.MD
 # keep models/ directory but ignore its contents
 /models/*
 !/models/.gitkeep
+
+# generated outputs
+/results/

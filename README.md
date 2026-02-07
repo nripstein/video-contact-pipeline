@@ -79,6 +79,15 @@ Inference + condense:
 python run_pipeline.py --input /path/to/input --output-dir results/run/
 ```
 
+Optional filter flags:
+```
+# small-object filter is OFF by default; enable explicitly if desired
+python run_pipeline.py --input /path/to/input --output-dir results/run/ --small-object-filter --obj-smaller-factor 2.0
+
+# disable small-object filter explicitly (useful for parity or reproducibility)
+python run_pipeline.py --input /path/to/input --output-dir results/run/ --no-small-object-filter
+```
+
 Batch mode:
 ```
 python run_pipeline.py --input /path/to/folder_of_videos --output-dir results/batch_run/

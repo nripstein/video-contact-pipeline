@@ -17,6 +17,8 @@ This writes `tests/golden/detections_full.csv` and `tests/golden/detections_cond
 TEST_INPUT=/path/to/input pytest -q tests/test_old_golden.py
 ```
 - If `tests/golden/` is missing, the comparison step is skipped.
+- Note: the small-object hand-ratio filter is now off by default.
+  For parity runs, explicitly passing `--no-small-object-filter` is still fine and keeps behavior explicit.
 
 ## Manual CSV compare
 ```

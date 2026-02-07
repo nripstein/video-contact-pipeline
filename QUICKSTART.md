@@ -34,6 +34,8 @@ results/batch_run/<video_stem>/
 - `--inference-only` : run preprocessing + inference and exit (no condense)
 - `--no-blue-glove-filter`
 - `--no-object-size-filter`
+- `--small-object-filter` : enable small-object ratio filter (default is off)
+- `--obj-smaller-factor 2.0` : max allowed object/hand area ratio for portable contact (relabels to `No Contact` if object is larger)
 - `--obj-bigger-filter --obj-bigger-k 1.0`
 
 ## Postprocess-only modes
