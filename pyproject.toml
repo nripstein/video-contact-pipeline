@@ -9,4 +9,14 @@ description = "Notebook- and CLI-friendly pipeline package for Thesis-100-DOH"
 requires-python = ">=3.8"
 
 [tool.setuptools]
-packages = ["pipeline"]
+packages = [
+  "binary_refinement",
+  "pipeline",
+  "stimulus_detector",
+  "stimulus_detector.config",
+  "stimulus_detector.data_generation",
+  "stimulus_detector.training",
+  "stimulus_detector.inference",
+  "stimulus_detector.evaluation",
+  "stimulus_detector.utils",
+]
