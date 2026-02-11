@@ -7,6 +7,8 @@ from binary_refinement.config import (
 from binary_refinement.evaluator import (
     evaluate_binary_predictions,
     evaluate_strategy,
+    save_original_refined_gt_barcode,
+    save_original_vs_refined_barcode,
     save_comparison_barcode,
 )
 from binary_refinement.hsmm_k_segments import HSMMKSegmentsRefiner
@@ -26,5 +28,7 @@ __all__ = [
     "EvaluationResult",
     "evaluate_binary_predictions",
     "evaluate_strategy",
+    "save_original_refined_gt_barcode",
+    "save_original_vs_refined_barcode",
     "save_comparison_barcode",
 ]

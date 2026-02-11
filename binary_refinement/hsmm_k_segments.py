@@ -11,6 +11,14 @@ from binary_refinement.config import HSMMKSegmentsConfig
 from binary_refinement.types import RefinementResult
 
 
+def _tqdm():
+    try:
+        from tqdm import tqdm
+    except Exception:
+        return None
+    return tqdm
+
+
 def _count_transitions(seq: np.ndarray) -> int:
     if seq.size <= 1:
         return 0
@@ -60,6 +68,9 @@ class HSMMKSegmentsRefiner(BinaryRefinementStrategy):
         self.config = config
 
     def predict(self, observations: np.ndarray, **kwargs) -> RefinementResult:
+        use_progress = bool(kwargs.get("progress", False))
+        progress_desc = str(kwargs.get("progress_desc", "hsmm_dp"))
+
         cfg = replace(
             self.config,
             k_segments=int(kwargs.get("k_segments", self.config.k_segments)),
@@ -100,7 +111,13 @@ class HSMMKSegmentsRefiner(BinaryRefinementStrategy):
         back = np.full((k + 1, n + 1), -1, dtype=int)
         dp[0, 0] = 0.0
 
-        for m in range(1, k + 1):
+        iterable = range(1, k + 1)
+        if use_progress:
+            tqdm_fn = _tqdm()
+            if tqdm_fn is not None:
+                iterable = tqdm_fn(iterable, desc=progress_desc, unit="segment")
+
+        for m in iterable:
             seg_idx = m - 1
             state = _state_for_segment(seg_idx, int(cfg.start_state))
 
