@@ -16,10 +16,19 @@ LABEL_PORTABLE = "Portable Object"
 LABEL_STATIONARY = "Stationary Object"
 LABEL_NONE = "No Contact"
 
-PRIORITY = {
-    LABEL_PORTABLE: 0,
-    LABEL_STATIONARY: 1,
-    LABEL_NONE: 2,
+CONDENSE_PRIORITY_MAPS: Dict[str, Dict[str, int]] = {
+    # Legacy thesis-era behavior: prefer negative label under duplicate frame detections.
+    "no_contact_first": {
+        LABEL_NONE: 0,
+        LABEL_STATIONARY: 1,
+        LABEL_PORTABLE: 2,
+    },
+    # Refactor behavior: prefer portable contact under duplicate frame detections.
+    "portable_first": {
+        LABEL_PORTABLE: 0,
+        LABEL_STATIONARY: 1,
+        LABEL_NONE: 2,
+    },
 }
 
 
@@ -39,11 +48,18 @@ def _normalize_label(label: str) -> str:
     return LABEL_NONE
 
 
-def _select_label(labels: List[str]) -> str:
+def _resolve_priority_map(strategy: str) -> Dict[str, int]:
+    if strategy not in CONDENSE_PRIORITY_MAPS:
+        choices = ", ".join(sorted(CONDENSE_PRIORITY_MAPS.keys()))
+        raise ValueError(f"Unsupported condense priority strategy '{strategy}'. Choices: {choices}")
+    return CONDENSE_PRIORITY_MAPS[strategy]
+
+
+def _select_label(labels: List[str], priority_map: Dict[str, int]) -> str:
     if not labels:
         return LABEL_NONE
     normalized = [_normalize_label(l) for l in labels]
-    return min(normalized, key=lambda l: PRIORITY[l])
+    return min(normalized, key=lambda l: priority_map[l])
 
 
 def _source_hand_for_frame(hand_sides: List[str]) -> str:
@@ -55,10 +71,11 @@ def _source_hand_for_frame(hand_sides: List[str]) -> str:
     return next(iter(sides))
 
 
-def condense_dataframe(full_df: pd.DataFrame) -> pd.DataFrame:
+def condense_dataframe(full_df: pd.DataFrame, priority_strategy: str = "no_contact_first") -> pd.DataFrame:
     """
     Condense full detections to one row per frame.
     """
+    priority_map = _resolve_priority_map(priority_strategy)
     if full_df.empty:
         return pd.DataFrame(
             columns=["frame_id", "frame_number", "contact_label", "source_hand"]
@@ -83,7 +100,7 @@ def condense_dataframe(full_df: pd.DataFrame) -> pd.DataFrame:
         ]
 
         labels = hand_df["contact_label"].dropna().tolist()
-        contact_label = _select_label(labels)
+        contact_label = _select_label(labels, priority_map)
 
         hand_sides = hand_df["hand_side"].dropna().tolist()
         source_hand = _source_hand_for_frame(hand_sides)

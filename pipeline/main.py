@@ -10,6 +10,7 @@ from pipeline.config import PipelineConfig
 import pandas as pd
 
 from pipeline.inference import HandObjectDetector
+from pipeline.filters import apply_strict_portable_match_filter
 from pipeline.postprocessing import apply_detection_filters, condense_dataframe
 from pipeline.preprocessing import (
     DEFAULT_FRAME_EXT,
@@ -140,7 +141,17 @@ def run_single_input(
     image_dir = prepare_frames(single_config)
     full_df = run_inference(single_config, image_dir, detector=detector)
     full_df = apply_detection_filters(full_df, single_config, image_dir)
-    condensed_df = condense_dataframe(full_df) if do_condense else None
+    if single_config.tracking_bridge_enabled:
+        from object_tracking.bridge import apply_tracking_bridge
+
+        full_df = apply_tracking_bridge(full_df, single_config)
+    if single_config.strict_portable_match:
+        full_df = apply_strict_portable_match_filter(full_df, single_config)
+    condensed_df = (
+        condense_dataframe(full_df, priority_strategy=single_config.condense_priority_strategy)
+        if do_condense
+        else None
+    )
 
     output_dir = Path(single_config.resolve_output_dir()).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)

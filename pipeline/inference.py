@@ -19,6 +19,7 @@ from model.utils.config import cfg, cfg_from_file
 
 from pipeline.config import PipelineConfig
 from pipeline.preprocessing import get_sorted_image_list
+from pipeline.temporal_roi import TemporalROIPropagator, clip_bbox_to_image
 
 
 def _get_image_blob(im: np.ndarray):
@@ -176,14 +177,70 @@ class HandObjectDetector:
         self.fasterRCNN = fasterRCNN
         self.thresh_hand = config.thresh_hand
         self.thresh_obj = config.thresh_obj
+        self.temporal_propagator = None
+        if self.config.use_temporal_roi:
+            self.temporal_propagator = TemporalROIPropagator(
+                detect_once_fn=self._detect_single_image_once,
+                blue_guard_fn=self._is_experimenter_blue_bbox,
+                max_missed_frames=self.config.temporal_roi_max_missed_frames,
+            )
 
     def detect_single_image(self, im: np.ndarray) -> Dict[str, Optional[np.ndarray]]:
+        return self._detect_single_image_once(im, None)
+
+    def _is_experimenter_blue_bbox(self, im: np.ndarray, bbox) -> bool:
+        h, w = im.shape[:2]
+        x1, y1, x2, y2 = clip_bbox_to_image(bbox, w, h)
+        clipped = [int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2))]
+        if clipped[2] <= clipped[0] or clipped[3] <= clipped[1]:
+            return False
+        blue_prop = get_blue_bbox_proportion(im, bbox=clipped)
+        return blue_prop >= self.config.blue_threshold
+
+    def _to_scaled_extra_rois_tensor(
+        self,
+        extra_object_rois: Optional[np.ndarray],
+        im_scale: float,
+        im_info_np: np.ndarray,
+    ) -> Optional[torch.Tensor]:
+        if extra_object_rois is None:
+            return None
+        rois_np = np.asarray(extra_object_rois, dtype=np.float32)
+        if rois_np.size == 0:
+            return None
+        rois_np = rois_np.reshape(-1, 4).copy()
+        rois_np *= float(im_scale)
+        max_y = float(im_info_np[0, 0] - 1)
+        max_x = float(im_info_np[0, 1] - 1)
+        rois_np[:, 0] = np.clip(rois_np[:, 0], 0, max_x)
+        rois_np[:, 1] = np.clip(rois_np[:, 1], 0, max_y)
+        rois_np[:, 2] = np.clip(rois_np[:, 2], 0, max_x)
+        rois_np[:, 3] = np.clip(rois_np[:, 3], 0, max_y)
+        valid = (rois_np[:, 2] > rois_np[:, 0]) & (rois_np[:, 3] > rois_np[:, 1])
+        rois_np = rois_np[valid]
+        if rois_np.size == 0:
+            return None
+        rois_pt = torch.from_numpy(rois_np).unsqueeze(0)
+        if self.config.cuda:
+            rois_pt = rois_pt.cuda()
+        return rois_pt
+
+    def _detect_single_image_once(
+        self,
+        im: np.ndarray,
+        extra_object_rois: Optional[np.ndarray],
+    ) -> Dict[str, Optional[np.ndarray]]:
         obj_dets, hand_dets = None, None
         blobs, im_scales = _get_image_blob(im)
         assert len(im_scales) == 1, "Only single-image batch implemented"
         im_blob = blobs
         im_info_np = np.array(
             [[im_blob.shape[1], im_blob.shape[2], im_scales[0]]], dtype=np.float32)
+        extra_rois_pt = self._to_scaled_extra_rois_tensor(
+            extra_object_rois=extra_object_rois,
+            im_scale=float(im_scales[0]),
+            im_info_np=im_info_np,
+        )
 
         im_data_pt = torch.from_numpy(im_blob)
         im_data_pt = im_data_pt.permute(0, 3, 1, 2)
@@ -199,7 +256,14 @@ class HandObjectDetector:
         rois, cls_prob, bbox_pred, \
             rpn_loss_cls, rpn_loss_box, \
             RCNN_loss_cls, RCNN_loss_bbox, \
-            rois_label, loss_list = self.fasterRCNN(self.im_data, self.im_info, self.gt_boxes, self.num_boxes, self.box_info)
+            rois_label, loss_list = self.fasterRCNN(
+                self.im_data,
+                self.im_info,
+                self.gt_boxes,
+                self.num_boxes,
+                self.box_info,
+                extra_rois=extra_rois_pt,
+            )
 
         scores = cls_prob.data
         boxes = rois.data[:, :, 1:5]
@@ -299,13 +363,18 @@ class HandObjectDetector:
             iterable = tqdm(image_list, desc="Processing Images")
         state_map = {0: 'No Contact', 1: 'Self Contact', 2: 'Other Person Contact', 3: 'Portable Object', 4: 'Stationary Object Contact'}
         side_map2 = {0: 'Left', 1: 'Right'}
+        if self.temporal_propagator is not None:
+            self.temporal_propagator.reset()
 
         for idx, img_path in enumerate(iterable):
             im = cv2.imread(img_path)
             if im is None:
                 continue
 
-            dets = self.detect_single_image(im)
+            if self.temporal_propagator is not None:
+                dets = self.temporal_propagator.detect(im)
+            else:
+                dets = self.detect_single_image(im)
             hand_dets = dets["hand_dets"]
             obj_dets = dets["obj_dets"]
 

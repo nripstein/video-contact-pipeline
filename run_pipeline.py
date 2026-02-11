@@ -35,6 +35,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gt-csv", dest="gt_csv_path", default=None)
     parser.add_argument("--no-progress", action="store_true")
     parser.add_argument("--save-annotated-frames", action="store_true")
+    parser.add_argument("--tracking-bridge", action="store_true")
+    parser.add_argument("--tracking-max-missed-frames", type=int, default=8)
+    parser.add_argument("--tracking-iou-threshold", type=float, default=0.15)
+    parser.add_argument("--tracking-init-obj-confidence", type=float, default=0.70)
+    parser.add_argument("--tracking-promotion-confirm-frames", type=int, default=2)
+    parser.add_argument("--tracking-reassociate-iou-threshold", type=float, default=0.10)
+    parser.add_argument("--tracking-promote-stationary", action="store_true")
+    parser.add_argument("--tracking-stationary-iou-threshold", type=float, default=0.20)
+    parser.add_argument("--tracking-stationary-confirm-frames", type=int, default=2)
+    parser.add_argument("--strict-portable-match", action="store_true")
+    parser.add_argument("--strict-portable-detected-iou-threshold", type=float, default=0.05)
+    parser.add_argument(
+        "--condense-priority-strategy",
+        choices=("no_contact_first", "portable_first"),
+        default="no_contact_first",
+        help="Tie-break strategy for duplicate-frame hand contact labels in detections_condensed.csv.",
+    )
+    parser.add_argument("--use-temporal-roi", "--use_temporal_roi", dest="use_temporal_roi", action="store_true")
+    parser.add_argument("--temporal-roi-max-missed-frames", type=int, default=8)
     parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--barcodes-only", action="store_true")
     parser.add_argument("--annotated-frames-only", action="store_true")
@@ -125,6 +144,20 @@ def main() -> int:
         gt_csv_path=args.gt_csv_path,
         show_progress=not args.no_progress,
         save_annotated_frames=args.save_annotated_frames,
+        tracking_bridge_enabled=args.tracking_bridge,
+        tracking_max_missed_frames=args.tracking_max_missed_frames,
+        tracking_contact_iou_threshold=args.tracking_iou_threshold,
+        tracking_init_obj_confidence=args.tracking_init_obj_confidence,
+        tracking_promotion_confirm_frames=args.tracking_promotion_confirm_frames,
+        tracking_reassociate_iou_threshold=args.tracking_reassociate_iou_threshold,
+        tracking_promote_stationary=args.tracking_promote_stationary,
+        tracking_stationary_iou_threshold=args.tracking_stationary_iou_threshold,
+        tracking_stationary_confirm_frames=args.tracking_stationary_confirm_frames,
+        strict_portable_match=args.strict_portable_match,
+        strict_portable_detected_iou_threshold=args.strict_portable_detected_iou_threshold,
+        condense_priority_strategy=args.condense_priority_strategy,
+        use_temporal_roi=args.use_temporal_roi,
+        temporal_roi_max_missed_frames=args.temporal_roi_max_missed_frames,
     )
 
     config_dict = config.to_dict()

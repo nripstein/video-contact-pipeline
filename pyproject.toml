@@ -11,6 +11,7 @@ requires-python = ">=3.8"
 [tool.setuptools]
 packages = [
   "binary_refinement",
+  "object_tracking",
   "pipeline",
   "stimulus_detector",
   "stimulus_detector.config",
