@@ -62,6 +62,8 @@ class HSMMKSegmentsConfig:
     start_state: int = 0
     duration_weight: float = 1.0
     emission_weight: float = 1.0
+    max_segment_length_frames: Optional[int] = 540
+    numba_mode: str = "auto"
     eps: float = 1e-12
 
     def __post_init__(self) -> None:
@@ -84,5 +86,12 @@ class HSMMKSegmentsConfig:
             raise ValueError("duration_weight must be >= 0")
         if self.emission_weight < 0:
             raise ValueError("emission_weight must be >= 0")
+        if self.max_segment_length_frames is not None:
+            if int(self.max_segment_length_frames) < 1:
+                raise ValueError("max_segment_length_frames must be >= 1 when provided")
+            self.max_segment_length_frames = int(self.max_segment_length_frames)
+        self.numba_mode = str(self.numba_mode).strip().lower()
+        if self.numba_mode not in {"auto", "on", "off"}:
+            raise ValueError("numba_mode must be one of: 'auto', 'on', 'off'")
         if not (0 < self.eps < 0.5):
             raise ValueError("eps must satisfy 0 < eps < 0.5")

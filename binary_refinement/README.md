@@ -117,6 +117,17 @@ The saved plot has three rows:
   - The evaluator thresholds probabilities at `0.5` for metric computation.
   - `HSMMKSegmentsRefiner` requires binary observations (`{0,1}`).
 
+## HSMM Options
+
+- `max_segment_length_frames`
+  - Hard cap on each segment duration.
+  - Default is `540` (9 seconds at 60 FPS).
+  - Use `None` to disable the cap.
+- `numba_mode`
+  - `auto`: use numba backend if installed, else Python backend.
+  - `on`: require numba backend.
+  - `off`: force Python backend.
+
 ## Complexity
 
 - `IdentityRefiner`
@@ -127,8 +138,9 @@ The saved plot has three rows:
   - Memory: `O((k+1) * n)`
   - If `start_state=None`, runtime is roughly doubled.
 - `HSMMKSegmentsRefiner` (exact segmental Viterbi)
-  - Time: `O(k * n^2)`
-  - Memory: `O(k * n)`
+  - Time (uncapped): `O(k * n^2)`
+  - Time (capped with max segment length `D`): `O(k * n * D)`
+  - Memory: `O(k * n)` for backtracking plus `O(n)` rolling DP rows
 
 `n` is sequence length. For `TransitionConstrainedDPRefiner`, `k` denotes transitions; for `HSMMKSegmentsRefiner`, `k` denotes segments.
 

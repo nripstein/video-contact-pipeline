@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from dataclasses import replace
 import math
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 
+from . import _hsmm_kernels as hsmm_kernels
 from binary_refinement.base import BinaryRefinementStrategy
 from binary_refinement.config import HSMMKSegmentsConfig
 from binary_refinement.types import RefinementResult
@@ -45,6 +46,20 @@ def _state_for_segment(seg_idx: int, start_state: int) -> int:
     return start_state if (seg_idx % 2 == 0) else (1 - start_state)
 
 
+def _resolve_backend(numba_mode: str) -> str:
+    mode = str(numba_mode).strip().lower()
+    has_numba = hsmm_kernels.numba_is_available()
+    if mode == "off":
+        return "python"
+    if mode == "on":
+        if not has_numba:
+            raise RuntimeError("numba_mode='on' requires numba to be installed.")
+        return "numba"
+    if mode == "auto":
+        return "numba" if has_numba else "python"
+    raise ValueError(f"Unsupported numba_mode: {numba_mode}")
+
+
 def _gamma_log_duration(d: int, state: int, cfg: HSMMKSegmentsConfig) -> float:
     if d <= 0:
         raise ValueError(f"segment duration must be >= 1; got {d}")
@@ -70,11 +85,19 @@ class HSMMKSegmentsRefiner(BinaryRefinementStrategy):
     def predict(self, observations: np.ndarray, **kwargs) -> RefinementResult:
         use_progress = bool(kwargs.get("progress", False))
         progress_desc = str(kwargs.get("progress_desc", "hsmm_dp"))
+        max_segment_length_frames: Optional[int] = kwargs.get(
+            "max_segment_length_frames", self.config.max_segment_length_frames
+        )
+        if max_segment_length_frames is not None:
+            max_segment_length_frames = int(max_segment_length_frames)
+        numba_mode = str(kwargs.get("numba_mode", self.config.numba_mode))
 
         cfg = replace(
             self.config,
             k_segments=int(kwargs.get("k_segments", self.config.k_segments)),
             start_state=int(kwargs.get("start_state", self.config.start_state)),
+            max_segment_length_frames=max_segment_length_frames,
+            numba_mode=numba_mode,
         )
         cfg.__post_init__()
 
@@ -84,6 +107,13 @@ class HSMMKSegmentsRefiner(BinaryRefinementStrategy):
             raise ValueError(
                 f"k_segments must be <= sequence length ({n}); got {cfg.k_segments}"
             )
+        if cfg.max_segment_length_frames is not None:
+            max_total_frames = int(cfg.k_segments) * int(cfg.max_segment_length_frames)
+            if n > max_total_frames:
+                raise ValueError(
+                    f"No feasible segmentation: sequence length ({n}) exceeds "
+                    f"k_segments * max_segment_length_frames ({max_total_frames})."
+                )
 
         p_y1_x0 = float(np.clip(cfg.fpr, cfg.eps, 1.0 - cfg.eps))
         p_y0_x0 = float(np.clip(1.0 - cfg.fpr, cfg.eps, 1.0 - cfg.eps))
@@ -94,22 +124,25 @@ class HSMMKSegmentsRefiner(BinaryRefinementStrategy):
         ll_state1 = np.where(obs == 0, math.log(p_y0_x1), math.log(p_y1_x1))
         ll0_prefix = np.concatenate(([0.0], np.cumsum(ll_state0)))
         ll1_prefix = np.concatenate(([0.0], np.cumsum(ll_state1)))
-        dur_ll_state0 = np.zeros(n + 1, dtype=float)
-        dur_ll_state1 = np.zeros(n + 1, dtype=float)
-        for d in range(1, n + 1):
+        max_dur = int(cfg.max_segment_length_frames) if cfg.max_segment_length_frames is not None else n
+        max_dur = min(max_dur, n)
+        dur_ll_state0 = np.zeros(max_dur + 1, dtype=float)
+        dur_ll_state1 = np.zeros(max_dur + 1, dtype=float)
+        for d in range(1, max_dur + 1):
             dur_ll_state0[d] = _gamma_log_duration(d, state=0, cfg=cfg)
             dur_ll_state1[d] = _gamma_log_duration(d, state=1, cfg=cfg)
 
-        def segment_emission_loglik(i: int, j: int, state: int) -> float:
-            if state == 0:
-                return float(ll0_prefix[j] - ll0_prefix[i])
-            return float(ll1_prefix[j] - ll1_prefix[i])
-
         k = int(cfg.k_segments)
-        neg_inf = -float("inf")
-        dp = np.full((k + 1, n + 1), neg_inf, dtype=float)
-        back = np.full((k + 1, n + 1), -1, dtype=int)
-        dp[0, 0] = 0.0
+        max_segment_length = int(cfg.max_segment_length_frames) if cfg.max_segment_length_frames is not None else -1
+        back = np.full((k + 1, n + 1), -1, dtype=np.int32)
+        dp_prev = np.full(n + 1, -np.inf, dtype=float)
+        dp_curr = np.full(n + 1, -np.inf, dtype=float)
+        dp_prev[0] = 0.0
+
+        backend = _resolve_backend(cfg.numba_mode)
+        fill_segment = hsmm_kernels.fill_segment_python
+        if backend == "numba":
+            fill_segment = hsmm_kernels.fill_segment_numba
 
         iterable = range(1, k + 1)
         if use_progress:
@@ -118,32 +151,25 @@ class HSMMKSegmentsRefiner(BinaryRefinementStrategy):
                 iterable = tqdm_fn(iterable, desc=progress_desc, unit="segment")
 
         for m in iterable:
-            seg_idx = m - 1
-            state = _state_for_segment(seg_idx, int(cfg.start_state))
+            fill_segment(
+                m=m,
+                k=k,
+                n=n,
+                start_state=int(cfg.start_state),
+                emission_weight=float(cfg.emission_weight),
+                duration_weight=float(cfg.duration_weight),
+                max_segment_length=max_segment_length,
+                dp_prev=dp_prev,
+                dp_curr=dp_curr,
+                back_row=back[m],
+                ll0_prefix=ll0_prefix,
+                ll1_prefix=ll1_prefix,
+                dur_ll_state0=dur_ll_state0,
+                dur_ll_state1=dur_ll_state1,
+            )
+            dp_prev, dp_curr = dp_curr, dp_prev
 
-            min_t = m
-            max_t = n - (k - m)
-            for t in range(min_t, max_t + 1):
-                u_min = m - 1
-                u_max = t - 1
-                best_score = neg_inf
-                best_u = -1
-                for u in range(u_min, u_max + 1):
-                    prev = float(dp[m - 1, u])
-                    if not np.isfinite(prev):
-                        continue
-                    d = t - u
-                    emit = cfg.emission_weight * segment_emission_loglik(u, t, state)
-                    dur_ll = float(dur_ll_state0[d] if state == 0 else dur_ll_state1[d])
-                    dur = cfg.duration_weight * dur_ll
-                    score = prev + emit + dur
-                    if score > best_score:
-                        best_score = score
-                        best_u = u
-                dp[m, t] = best_score
-                back[m, t] = best_u
-
-        objective = float(dp[k, n])
+        objective = float(dp_prev[n])
         if not np.isfinite(objective):
             raise RuntimeError("No feasible HSMM segmentation found.")
 
@@ -186,6 +212,11 @@ class HSMMKSegmentsRefiner(BinaryRefinementStrategy):
                 "lambda_non_contact": float(cfg.lambda_non_contact),
                 "alpha_contact": float(cfg.alpha_contact),
                 "lambda_contact": float(cfg.lambda_contact),
+                "max_segment_length_frames": (
+                    int(cfg.max_segment_length_frames) if cfg.max_segment_length_frames is not None else None
+                ),
+                "numba_mode": str(cfg.numba_mode),
+                "decoder_backend": backend,
                 "segments": metadata_segments,
             },
         )
