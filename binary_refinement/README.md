@@ -8,6 +8,8 @@ Tools for refining noisy binary frame-wise contact signals and evaluating refine
   - Baseline strategy that thresholds/returns the input signal.
 - `TransitionConstrainedDPRefiner`
   - Exact dynamic-programming strategy that enforces exactly `k` transitions and uses duration priors.
+- `HSMMKSegmentsRefiner`
+  - Exact segmental Viterbi for a left-to-right HSMM with exactly `k` segments, binary emissions (`FPR/FNR`), and Gamma duration priors.
 - Standard evaluation utilities:
   - `MoF`, `Edit Score`, `F1@tau`, confusion counts.
   - Optional barcode artifact: `Ground Truth`, `Original`, `Refined`.
@@ -15,9 +17,10 @@ Tools for refining noisy binary frame-wise contact signals and evaluating refine
 ## Files
 
 - `base.py`: abstract strategy interface (`BinaryRefinementStrategy`)
-- `config.py`: config dataclasses (`DurationPriorConfig`, `TransitionDPConfig`)
+- `config.py`: config dataclasses (`DurationPriorConfig`, `TransitionDPConfig`, `HSMMKSegmentsConfig`)
 - `identity.py`: baseline refiner
 - `transition_dp.py`: exact transition-constrained DP refiner
+- `hsmm_k_segments.py`: exact `k`-segment HSMM refiner
 - `evaluator.py`: metrics + barcode artifact helpers
 - `types.py`: `RefinementResult` and `EvaluationResult`
 - `example_usage.py`: runnable demo
@@ -36,6 +39,8 @@ python -m binary_refinement.example_usage
 import numpy as np
 from binary_refinement import (
     IdentityRefiner,
+    HSMMKSegmentsConfig,
+    HSMMKSegmentsRefiner,
     TransitionConstrainedDPRefiner,
     DurationPriorConfig,
     TransitionDPConfig,
@@ -65,9 +70,21 @@ dp_cfg = TransitionDPConfig(
 
 identity = IdentityRefiner()
 dp = TransitionConstrainedDPRefiner(dp_cfg)
+hsmm_cfg = HSMMKSegmentsConfig(
+    k_segments=3,
+    alpha_non_contact=40.0,
+    lambda_non_contact=4.0,
+    alpha_contact=48.0,
+    lambda_contact=4.0,
+    fpr=0.10,
+    fnr=0.10,
+    start_state=0,
+)
+hsmm = HSMMKSegmentsRefiner(hsmm_cfg)
 
 _, id_metrics = evaluate_strategy(identity, observations=observations, ground_truth=gt)
 _, dp_metrics = evaluate_strategy(dp, observations=observations, ground_truth=gt)
+_, hsmm_metrics = evaluate_strategy(hsmm, observations=(observations >= 0.5).astype(int), ground_truth=gt)
 ```
 
 ## Evaluate + Save Barcode Comparison
@@ -98,6 +115,7 @@ The saved plot has three rows:
 - Observations:
   - Either binary signal or probabilities in `[0, 1]`.
   - The evaluator thresholds probabilities at `0.5` for metric computation.
+  - `HSMMKSegmentsRefiner` requires binary observations (`{0,1}`).
 
 ## Complexity
 
@@ -108,8 +126,11 @@ The saved plot has three rows:
   - Time: `O((k+1) * n^2)`
   - Memory: `O((k+1) * n)`
   - If `start_state=None`, runtime is roughly doubled.
+- `HSMMKSegmentsRefiner` (exact segmental Viterbi)
+  - Time: `O(k * n^2)`
+  - Memory: `O(k * n)`
 
-`n` is sequence length and `k` is required transition count.
+`n` is sequence length. For `TransitionConstrainedDPRefiner`, `k` denotes transitions; for `HSMMKSegmentsRefiner`, `k` denotes segments.
 
 ## Notes
 
