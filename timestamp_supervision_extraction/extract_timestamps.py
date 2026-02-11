@@ -67,7 +67,7 @@ def parse_args() -> argparse.Namespace:
         "--random_seed",
         type=int,
         default=None,
-        help="Optional random seed for reproducible center-biased sampling",
+        help="Retained for CLI compatibility; currently ignored because selection is deterministic.",
     )
     parser.add_argument(
         "--extract_frames",
@@ -266,32 +266,23 @@ def filter_islands(
     return kept, summary
 
 
-def _sample_center_biased_index(length: int, rng: np.random.Generator) -> int:
+def _select_middle_index(length: int) -> int:
     if length <= 0:
         raise ValueError("Island length must be positive")
-    if length == 1:
-        return 0
-
-    center = (length - 1) / 2.0
-    sigma = (length - 1) / 4.0
-    while True:
-        sampled = rng.normal(loc=center, scale=sigma)
-        index = int(np.rint(sampled))
-        if 0 <= index <= (length - 1):
-            return index
+    return int(length // 2)
 
 
 def select_central_frames(
     islands: Sequence[Dict[str, Any]],
     rng: np.random.Generator | None = None,
 ) -> List[Dict[str, Any]]:
-    if rng is None:
-        rng = np.random.default_rng()
+    # Compatibility no-op: selection is deterministic and does not use randomness.
+    _ = rng
 
     selections: List[Dict[str, Any]] = []
     for island in islands:
         frame_ids = island["frame_ids"]
-        selected_idx = _sample_center_biased_index(len(frame_ids), rng)
+        selected_idx = _select_middle_index(len(frame_ids))
         selected_frame_id = int(frame_ids[selected_idx])
         selections.append(
             {
@@ -673,11 +664,8 @@ def run(args: argparse.Namespace) -> int:
     image_format = args.image_format.lstrip(".").lower()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    rng = (
-        np.random.default_rng(args.random_seed)
-        if args.random_seed is not None
-        else np.random.default_rng()
-    )
+    if args.random_seed is not None:
+        LOGGER.info("random_seed=%s is currently ignored; frame selection is deterministic.", args.random_seed)
 
     all_selections: List[Dict[str, Any]] = []
     overall_stats = {
@@ -707,7 +695,7 @@ def run(args: argparse.Namespace) -> int:
             fps=args.fps,
             min_seconds=args.min_island_seconds,
         )
-        video_selections = select_central_frames(filtered_islands, rng=rng)
+        video_selections = select_central_frames(filtered_islands, rng=None)
         _write_per_video_csv(output_dir=output_dir, video_id=video_id, selections=video_selections)
         all_selections.extend(video_selections)
 
