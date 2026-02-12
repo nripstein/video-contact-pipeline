@@ -76,6 +76,34 @@ Default output path:
 <condensed_csv_parent>/visualizations/contact_timeline.mp4
 ```
 
+## HSMM posteriors + confidence barcode
+Run HSMM refinement and export posterior probabilities:
+```bash
+python scripts/run_hsmm_refinement.py \
+  --condensed-csv /path/to/detections_condensed.csv \
+  --gt-csv /path/to/gt.csv \
+  --k-segments 11 \
+  --alpha-during-trial 9.0 \
+  --lambda-during-trial 0.1 \
+  --alpha-between-trials 9.0 \
+  --lambda-between-trials 0.075 \
+  --fpr 0.1 \
+  --fnr 0.1 \
+  --return-posteriors \
+  --no-progress
+```
+
+Outputs are written to:
+```
+<pred_dir>/hsmm_refinement/
+```
+
+Important files:
+- `hsmm_refined_binary.csv` : original and refined binary predictions
+- `hsmm_posteriors.csv` : frame-wise posterior probability `posterior_contact`
+- `barcode_original_refined_gt.png` : binary barcode comparison
+- `barcode_confidence_refined_gt.png` : 3-row confidence plot (confidence top, refined middle, GT bottom)
+
 ## Regression tests
 ```bash
 pytest -q

@@ -140,6 +140,26 @@ python run_pipeline.py --barcodes-only --condensed-csv /path/to/detections_conde
 python run_pipeline.py --annotated-frames-only --full-csv /path/to/detections_full.csv --image-dir /path/to/frames --output-dir results/post/
 ```
 
+HSMM refinement with posterior probabilities + confidence barcode:
+```
+python scripts/run_hsmm_refinement.py \
+  --condensed-csv /path/to/detections_condensed.csv \
+  --gt-csv /path/to/gt.csv \
+  --k-segments 11 \
+  --alpha-during-trial 9.0 \
+  --lambda-during-trial 0.1 \
+  --alpha-between-trials 9.0 \
+  --lambda-between-trials 0.075 \
+  --fpr 0.1 \
+  --fnr 0.1 \
+  --return-posteriors \
+  --no-progress
+```
+
+With `--return-posteriors`, HSMM writes these additional artifacts under `<pred_dir>/hsmm_refinement/`:
+- `hsmm_posteriors.csv` with columns `<frame_column>, posterior_contact`
+- `barcode_confidence_refined_gt.png` (top: `P(holding)` with line overlay, middle: refined prediction barcode, bottom: GT barcode)
+
 Contact timeline video (pred vs GT, optional secondary prediction track):
 ```
 python scripts/make_contact_timeline_video.py \

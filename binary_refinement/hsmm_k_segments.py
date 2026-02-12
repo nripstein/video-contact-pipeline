@@ -78,6 +78,225 @@ def _gamma_log_duration(d: int, state: int, cfg: HSMMKSegmentsConfig) -> float:
     )
 
 
+def _logsumexp_pair(log_a: float, log_b: float) -> float:
+    if not np.isfinite(log_a):
+        return float(log_b)
+    if not np.isfinite(log_b):
+        return float(log_a)
+    hi = float(log_a) if log_a >= log_b else float(log_b)
+    lo = float(log_b) if log_a >= log_b else float(log_a)
+    return hi + math.log1p(math.exp(lo - hi))
+
+
+def _bounded_t_range(m: int, k: int, n: int, max_segment_length: int) -> Tuple[int, int]:
+    min_t = m
+    max_t = n - (k - m)
+    if max_segment_length > 0:
+        min_t = max(min_t, n - (k - m) * max_segment_length)
+        max_t = min(max_t, m * max_segment_length)
+    return int(min_t), int(max_t)
+
+
+def _bounded_boundary_range(m: int, k: int, n: int, max_segment_length: int) -> Tuple[int, int]:
+    if m <= 0:
+        return 0, 0
+    if m >= k:
+        return n, n
+    return _bounded_t_range(m=m, k=k, n=n, max_segment_length=max_segment_length)
+
+
+def _bounded_prev_range(m: int, t: int, max_segment_length: int) -> Tuple[int, int]:
+    u_min = m - 1
+    u_max = t - 1
+    if max_segment_length > 0:
+        u_min = max(u_min, t - max_segment_length)
+        u_max = min(u_max, (m - 1) * max_segment_length)
+    return int(u_min), int(u_max)
+
+
+def _segment_log_score(
+    *,
+    state: int,
+    start_idx: int,
+    end_idx_exclusive: int,
+    emission_weight: float,
+    duration_weight: float,
+    ll0_prefix: np.ndarray,
+    ll1_prefix: np.ndarray,
+    dur_ll_state0: np.ndarray,
+    dur_ll_state1: np.ndarray,
+) -> float:
+    d = int(end_idx_exclusive - start_idx)
+    if state == 0:
+        emit_ll = float(ll0_prefix[end_idx_exclusive] - ll0_prefix[start_idx])
+        dur_ll = float(dur_ll_state0[d])
+    else:
+        emit_ll = float(ll1_prefix[end_idx_exclusive] - ll1_prefix[start_idx])
+        dur_ll = float(dur_ll_state1[d])
+    return (float(emission_weight) * emit_ll) + (float(duration_weight) * dur_ll)
+
+
+def _forward_log_probs(
+    *,
+    k: int,
+    n: int,
+    start_state: int,
+    emission_weight: float,
+    duration_weight: float,
+    max_segment_length: int,
+    ll0_prefix: np.ndarray,
+    ll1_prefix: np.ndarray,
+    dur_ll_state0: np.ndarray,
+    dur_ll_state1: np.ndarray,
+) -> np.ndarray:
+    alpha = np.full((k + 1, n + 1), -np.inf, dtype=float)
+    alpha[0, 0] = 0.0
+    for m in range(1, k + 1):
+        state = _state_for_segment(m - 1, start_state)
+        min_t, max_t = _bounded_t_range(m=m, k=k, n=n, max_segment_length=max_segment_length)
+        if min_t > max_t:
+            continue
+        for t in range(min_t, max_t + 1):
+            u_min, u_max = _bounded_prev_range(m=m, t=t, max_segment_length=max_segment_length)
+            if u_min > u_max:
+                continue
+            total = -np.inf
+            for u in range(u_min, u_max + 1):
+                prev = float(alpha[m - 1, u])
+                if not np.isfinite(prev):
+                    continue
+                seg_score = _segment_log_score(
+                    state=state,
+                    start_idx=u,
+                    end_idx_exclusive=t,
+                    emission_weight=emission_weight,
+                    duration_weight=duration_weight,
+                    ll0_prefix=ll0_prefix,
+                    ll1_prefix=ll1_prefix,
+                    dur_ll_state0=dur_ll_state0,
+                    dur_ll_state1=dur_ll_state1,
+                )
+                total = _logsumexp_pair(total, prev + seg_score)
+            alpha[m, t] = float(total)
+    return alpha
+
+
+def _backward_log_probs(
+    *,
+    k: int,
+    n: int,
+    start_state: int,
+    emission_weight: float,
+    duration_weight: float,
+    max_segment_length: int,
+    ll0_prefix: np.ndarray,
+    ll1_prefix: np.ndarray,
+    dur_ll_state0: np.ndarray,
+    dur_ll_state1: np.ndarray,
+) -> np.ndarray:
+    beta = np.full((k + 1, n + 1), -np.inf, dtype=float)
+    beta[k, n] = 0.0
+    for m_done in range(k - 1, -1, -1):
+        state = _state_for_segment(m_done, start_state)
+        min_t, max_t = _bounded_boundary_range(
+            m=m_done, k=k, n=n, max_segment_length=max_segment_length
+        )
+        if min_t > max_t:
+            continue
+        n_remaining_after_next = k - (m_done + 1)
+        for t in range(min_t, max_t + 1):
+            v_min = t + 1
+            v_max = n - n_remaining_after_next
+            if max_segment_length > 0:
+                v_max = min(v_max, t + max_segment_length)
+                v_min = max(v_min, n - n_remaining_after_next * max_segment_length)
+            if v_min > v_max:
+                continue
+            total = -np.inf
+            for v in range(v_min, v_max + 1):
+                nxt = float(beta[m_done + 1, v])
+                if not np.isfinite(nxt):
+                    continue
+                seg_score = _segment_log_score(
+                    state=state,
+                    start_idx=t,
+                    end_idx_exclusive=v,
+                    emission_weight=emission_weight,
+                    duration_weight=duration_weight,
+                    ll0_prefix=ll0_prefix,
+                    ll1_prefix=ll1_prefix,
+                    dur_ll_state0=dur_ll_state0,
+                    dur_ll_state1=dur_ll_state1,
+                )
+                total = _logsumexp_pair(total, seg_score + nxt)
+            beta[m_done, t] = float(total)
+    return beta
+
+
+def _posterior_contact_from_fb(
+    *,
+    k: int,
+    n: int,
+    start_state: int,
+    emission_weight: float,
+    duration_weight: float,
+    max_segment_length: int,
+    alpha: np.ndarray,
+    beta: np.ndarray,
+    ll0_prefix: np.ndarray,
+    ll1_prefix: np.ndarray,
+    dur_ll_state0: np.ndarray,
+    dur_ll_state1: np.ndarray,
+) -> np.ndarray:
+    log_z = float(alpha[k, n])
+    if not np.isfinite(log_z):
+        raise RuntimeError("Forward pass returned non-finite log normalizer.")
+
+    diff = np.zeros(n + 1, dtype=float)
+    for m in range(1, k + 1):
+        state = _state_for_segment(m - 1, start_state)
+        if state != 1:
+            continue
+
+        min_v, max_v = _bounded_t_range(m=m, k=k, n=n, max_segment_length=max_segment_length)
+        if min_v > max_v:
+            continue
+        for v in range(min_v, max_v + 1):
+            suffix = float(beta[m, v])
+            if not np.isfinite(suffix):
+                continue
+            u_min, u_max = _bounded_prev_range(m=m, t=v, max_segment_length=max_segment_length)
+            if u_min > u_max:
+                continue
+            for u in range(u_min, u_max + 1):
+                prev = float(alpha[m - 1, u])
+                if not np.isfinite(prev):
+                    continue
+                seg_score = _segment_log_score(
+                    state=state,
+                    start_idx=u,
+                    end_idx_exclusive=v,
+                    emission_weight=emission_weight,
+                    duration_weight=duration_weight,
+                    ll0_prefix=ll0_prefix,
+                    ll1_prefix=ll1_prefix,
+                    dur_ll_state0=dur_ll_state0,
+                    dur_ll_state1=dur_ll_state1,
+                )
+                log_joint = prev + seg_score + suffix
+                if not np.isfinite(log_joint):
+                    continue
+                log_weight = log_joint - log_z
+                weight = math.exp(min(0.0, log_weight))
+                if weight == 0.0:
+                    continue
+                diff[u] += weight
+                diff[v] -= weight
+
+    posteriors = np.cumsum(diff[:-1], dtype=float)
+    return np.clip(posteriors, 0.0, 1.0)
+
+
 class HSMMKSegmentsRefiner(BinaryRefinementStrategy):
     def __init__(self, config: HSMMKSegmentsConfig):
         self.config = config
@@ -85,6 +304,7 @@ class HSMMKSegmentsRefiner(BinaryRefinementStrategy):
     def predict(self, observations: np.ndarray, **kwargs) -> RefinementResult:
         use_progress = bool(kwargs.get("progress", False))
         progress_desc = str(kwargs.get("progress_desc", "hsmm_dp"))
+        return_posteriors = bool(kwargs.get("return_posteriors", False))
         max_segment_length_frames: Optional[int] = kwargs.get(
             "max_segment_length_frames", self.config.max_segment_length_frames
         )
@@ -188,6 +408,47 @@ class HSMMKSegmentsRefiner(BinaryRefinementStrategy):
         for start_idx, end_idx, state in segments:
             refined[start_idx:end_idx] = int(state)
 
+        posteriors: Optional[np.ndarray] = None
+        if return_posteriors:
+            alpha = _forward_log_probs(
+                k=k,
+                n=n,
+                start_state=int(cfg.start_state),
+                emission_weight=float(cfg.emission_weight),
+                duration_weight=float(cfg.duration_weight),
+                max_segment_length=max_segment_length,
+                ll0_prefix=ll0_prefix,
+                ll1_prefix=ll1_prefix,
+                dur_ll_state0=dur_ll_state0,
+                dur_ll_state1=dur_ll_state1,
+            )
+            beta = _backward_log_probs(
+                k=k,
+                n=n,
+                start_state=int(cfg.start_state),
+                emission_weight=float(cfg.emission_weight),
+                duration_weight=float(cfg.duration_weight),
+                max_segment_length=max_segment_length,
+                ll0_prefix=ll0_prefix,
+                ll1_prefix=ll1_prefix,
+                dur_ll_state0=dur_ll_state0,
+                dur_ll_state1=dur_ll_state1,
+            )
+            posteriors = _posterior_contact_from_fb(
+                k=k,
+                n=n,
+                start_state=int(cfg.start_state),
+                emission_weight=float(cfg.emission_weight),
+                duration_weight=float(cfg.duration_weight),
+                max_segment_length=max_segment_length,
+                alpha=alpha,
+                beta=beta,
+                ll0_prefix=ll0_prefix,
+                ll1_prefix=ll1_prefix,
+                dur_ll_state0=dur_ll_state0,
+                dur_ll_state1=dur_ll_state1,
+            )
+
         metadata_segments = [
             {
                 "start_idx": int(start_idx),
@@ -217,6 +478,8 @@ class HSMMKSegmentsRefiner(BinaryRefinementStrategy):
                 ),
                 "numba_mode": str(cfg.numba_mode),
                 "decoder_backend": backend,
+                "return_posteriors": bool(return_posteriors),
                 "segments": metadata_segments,
             },
+            posteriors=posteriors,
         )

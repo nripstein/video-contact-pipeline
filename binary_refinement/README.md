@@ -10,6 +10,7 @@ Tools for refining noisy binary frame-wise contact signals and evaluating refine
   - Exact dynamic-programming strategy that enforces exactly `k` transitions and uses duration priors.
 - `HSMMKSegmentsRefiner`
   - Exact segmental Viterbi for a left-to-right HSMM with exactly `k` segments, binary emissions (`FPR/FNR`), and Gamma duration priors.
+  - Optional forward-backward posterior computation for frame-wise `P(holding | y)`.
 - Standard evaluation utilities:
   - `MoF`, `Edit Score`, `F1@tau`, confusion counts.
   - Optional barcode artifact: `Ground Truth`, `Original`, `Refined`.
@@ -22,7 +23,7 @@ Tools for refining noisy binary frame-wise contact signals and evaluating refine
 - `transition_dp.py`: exact transition-constrained DP refiner
 - `hsmm_k_segments.py`: exact `k`-segment HSMM refiner
 - `evaluator.py`: metrics + barcode artifact helpers
-- `types.py`: `RefinementResult` and `EvaluationResult`
+- `types.py`: `RefinementResult` (includes optional `posteriors`) and `EvaluationResult`
 - `example_usage.py`: runnable demo
 
 ## Quickstart
@@ -45,6 +46,7 @@ from binary_refinement import (
     DurationPriorConfig,
     TransitionDPConfig,
     evaluate_strategy,
+    save_confidence_refined_gt_barcode,
 )
 
 gt = np.array([0,0,0,1,1,1,0,0], dtype=int)
@@ -87,6 +89,23 @@ _, dp_metrics = evaluate_strategy(dp, observations=observations, ground_truth=gt
 _, hsmm_metrics = evaluate_strategy(hsmm, observations=(observations >= 0.5).astype(int), ground_truth=gt)
 ```
 
+## HSMM Posteriors (Forward-Backward)
+
+Request frame-wise posterior probabilities from HSMM:
+
+```python
+obs_binary = (observations >= 0.5).astype(int)
+result = hsmm.predict(obs_binary, return_posteriors=True)
+
+# Binary Viterbi sequence (unchanged behavior)
+refined = result.sequence
+
+# Posterior probability per frame: P(holding | y), shape (n,)
+posterior = result.posteriors
+```
+
+When `return_posteriors=True`, `result.posteriors` contains values in `[0, 1]`.
+
 ## Evaluate + Save Barcode Comparison
 
 ```python
@@ -108,6 +127,27 @@ The saved plot has three rows:
 2. Original
 3. Refined
 
+## Confidence Barcode Plot (3 rows)
+
+Create the confidence-extended barcode plot:
+
+```python
+save_confidence_refined_gt_barcode(
+    confidence=result.posteriors,
+    refined_signal=result.sequence,
+    ground_truth=gt,
+    save_path="results/binary_refinement/barcode_confidence_refined_gt.png",
+    confidence_name="P(Holding)",
+    refined_name="HSMM Refined",
+    ground_truth_name="Ground Truth",
+)
+```
+
+This plot contains:
+1. Top: continuous confidence row (`P(holding)`) with line overlay
+2. Middle: binary prediction barcode
+3. Bottom: binary ground-truth barcode
+
 ## Input Conventions
 
 - Ground truth:
@@ -127,6 +167,9 @@ The saved plot has three rows:
   - `auto`: use numba backend if installed, else Python backend.
   - `on`: require numba backend.
   - `off`: force Python backend.
+- `return_posteriors` (predict kwarg)
+  - `False` (default): Viterbi sequence only.
+  - `True`: also compute forward-backward marginals and return `result.posteriors`.
 
 ## Complexity
 
