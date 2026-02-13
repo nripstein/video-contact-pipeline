@@ -148,6 +148,9 @@ This plot contains:
 2. Middle: binary prediction barcode
 3. Bottom: binary ground-truth barcode
 
+The barcode renderer now uses the same Matplotlib styling path as pipeline barcodes
+(`barcode_pred.png` / `barcode_pred_vs_gt.png`) for consistent sizing and readability.
+
 ## Input Conventions
 
 - Ground truth:

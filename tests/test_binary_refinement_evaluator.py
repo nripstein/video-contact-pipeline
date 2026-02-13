@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 
 import numpy as np
+from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -65,6 +66,8 @@ def test_save_original_vs_refined_barcode(tmp_path: Path):
 
     assert out_path.exists()
     assert saved == str(out_path)
+    with Image.open(out_path) as image:
+        assert image.size == (2000, 480)
 
 
 def test_save_original_refined_gt_barcode(tmp_path: Path):
@@ -77,6 +80,9 @@ def test_save_original_refined_gt_barcode(tmp_path: Path):
 
     assert out_path.exists()
     assert saved == str(out_path)
+    with Image.open(out_path) as image:
+        assert image.size[0] == 2000
+        assert image.size[1] in {719, 720}
 
 
 def test_save_confidence_refined_gt_barcode(tmp_path: Path):
@@ -89,6 +95,9 @@ def test_save_confidence_refined_gt_barcode(tmp_path: Path):
 
     assert out_path.exists()
     assert saved == str(out_path)
+    with Image.open(out_path) as image:
+        assert image.size[0] == 2000
+        assert image.size[1] in {719, 720}
 
 
 def test_save_confidence_refined_gt_barcode_rejects_length_mismatch(tmp_path: Path):

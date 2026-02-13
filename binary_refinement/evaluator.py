@@ -4,11 +4,11 @@ from pathlib import Path
 from typing import Iterable, Tuple
 
 import numpy as np
-from PIL import Image, ImageDraw
 
 from binary_refinement.base import BinaryRefinementStrategy
 from binary_refinement.types import EvaluationResult, RefinementResult
 from pipeline.metrics import confusion_counts, edit_score, f_score, frame_accuracy
+from pipeline.visualization import plot_confidence_iterative_barcodes, plot_iterative_barcodes
 
 
 def _as_binary(arr: np.ndarray, name: str, allow_probabilities: bool) -> np.ndarray:
@@ -153,55 +153,14 @@ def save_confidence_refined_gt_barcode(
 
     out = Path(save_path).expanduser()
     out.parent.mkdir(parents=True, exist_ok=True)
-
-    red = np.array([200, 28, 52], dtype=np.uint8)
-    green = np.array([38, 140, 47], dtype=np.uint8)
-
-    left_label_px = 130
-    row_height_confidence_px = 32
-    row_height_binary_px = 24
-    row_gap_px = 8
-    n = int(conf.shape[0])
-    width = left_label_px + n
-    height = row_height_confidence_px + row_gap_px + row_height_binary_px + row_gap_px + row_height_binary_px
-
-    canvas = np.full((height, width, 3), 255, dtype=np.uint8)
-
-    y_conf = 0
-    y_pred = row_height_confidence_px + row_gap_px
-    y_gt = y_pred + row_height_binary_px + row_gap_px
-
-    grad = ((1.0 - conf)[:, None] * red[None, :]) + (conf[:, None] * green[None, :])
-    conf_colors = np.clip(np.round(grad), 0.0, 255.0).astype(np.uint8)
-    conf_row = np.tile(conf_colors[None, :, :], (row_height_confidence_px, 1, 1))
-    canvas[y_conf:y_conf + row_height_confidence_px, left_label_px:left_label_px + n] = conf_row
-
-    pred_colors = np.where(ref[:, None] == 1, green, red).astype(np.uint8)
-    pred_row = np.tile(pred_colors[None, :, :], (row_height_binary_px, 1, 1))
-    canvas[y_pred:y_pred + row_height_binary_px, left_label_px:left_label_px + n] = pred_row
-
-    gt_colors = np.where(gt[:, None] == 1, green, red).astype(np.uint8)
-    gt_row = np.tile(gt_colors[None, :, :], (row_height_binary_px, 1, 1))
-    canvas[y_gt:y_gt + row_height_binary_px, left_label_px:left_label_px + n] = gt_row
-
-    image = Image.fromarray(canvas, mode="RGB")
-    draw = ImageDraw.Draw(image)
-
-    line_points = []
-    for idx, prob in enumerate(conf):
-        x = left_label_px + idx
-        y = y_conf + int(round((1.0 - float(prob)) * (row_height_confidence_px - 1)))
-        line_points.append((x, y))
-    if len(line_points) == 1:
-        draw.point(line_points[0], fill=(0, 0, 0))
-    else:
-        draw.line(line_points, fill=(0, 0, 0), width=1)
-
-    draw.text((8, y_conf + 8), str(confidence_name), fill=(0, 0, 0))
-    draw.text((8, y_pred + 5), str(refined_name), fill=(0, 0, 0))
-    draw.text((8, y_gt + 5), str(ground_truth_name), fill=(0, 0, 0))
-
-    image.save(str(out))
+    plot_confidence_iterative_barcodes(
+        confidence=conf,
+        data_list=[ref, gt],
+        confidence_title=str(confidence_name),
+        titles=[str(refined_name), str(ground_truth_name)],
+        show=False,
+        save_file=str(out),
+    )
     return str(out)
 
 
@@ -227,30 +186,12 @@ def _save_binary_rows_barcode(
 
     out = Path(save_path).expanduser()
     out.parent.mkdir(parents=True, exist_ok=True)
-
-    red = np.array([200, 28, 52], dtype=np.uint8)
-    green = np.array([38, 140, 47], dtype=np.uint8)
-
-    left_label_px = 130
-    row_height_px = 24
-    row_gap_px = 8
-    height = len(signal_list) * row_height_px + (len(signal_list) - 1) * row_gap_px
-    width = left_label_px + n
-
-    canvas = np.full((height, width, 3), 255, dtype=np.uint8)
-    for idx, signal in enumerate(signal_list):
-        y0 = idx * (row_height_px + row_gap_px)
-        colors = np.where(signal[:, None] == 1, green, red).astype(np.uint8)
-        barcode_row = np.tile(colors[None, :, :], (row_height_px, 1, 1))
-        canvas[y0:y0 + row_height_px, left_label_px:left_label_px + n] = barcode_row
-
-    image = Image.fromarray(canvas, mode="RGB")
-    draw = ImageDraw.Draw(image)
-    for idx, row_name in enumerate(name_list):
-        y0 = idx * (row_height_px + row_gap_px)
-        draw.text((8, y0 + 5), row_name, fill=(0, 0, 0))
-
-    image.save(str(out))
+    plot_iterative_barcodes(
+        data_list=signal_list,
+        titles=name_list,
+        show=False,
+        save_file=str(out),
+    )
     return str(out)
 
 
