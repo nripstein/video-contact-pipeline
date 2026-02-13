@@ -37,6 +37,21 @@ class PipelineConfig:
     obj_smaller_ratio_factor: float = 2.0
 
     obj_match_tiebreak: str = "conf_then_dist_then_iou"
+    condense_priority_strategy: str = "no_contact_first"
+    strict_portable_match: bool = False
+    strict_portable_detected_iou_threshold: float = 0.05
+
+    tracking_bridge_enabled: bool = False
+    tracking_max_missed_frames: int = 8
+    tracking_contact_iou_threshold: float = 0.15
+    tracking_init_obj_confidence: float = 0.70
+    tracking_promotion_confirm_frames: int = 2
+    tracking_reassociate_iou_threshold: float = 0.10
+    tracking_promote_stationary: bool = False
+    tracking_stationary_iou_threshold: float = 0.20
+    tracking_stationary_confirm_frames: int = 2
+    use_temporal_roi: bool = False
+    temporal_roi_max_missed_frames: int = 8
 
     save_full_csv: bool = True
     save_condensed_csv: bool = True

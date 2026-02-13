@@ -4,11 +4,11 @@ from pathlib import Path
 from typing import Iterable, Tuple
 
 import numpy as np
-from PIL import Image, ImageDraw
 
 from binary_refinement.base import BinaryRefinementStrategy
 from binary_refinement.types import EvaluationResult, RefinementResult
 from pipeline.metrics import confusion_counts, edit_score, f_score, frame_accuracy
+from pipeline.visualization import plot_confidence_iterative_barcodes, plot_iterative_barcodes
 
 
 def _as_binary(arr: np.ndarray, name: str, allow_probabilities: bool) -> np.ndarray:
@@ -74,35 +74,124 @@ def save_comparison_barcode(
             f"ground_truth={gt.shape[0]} original_signal={orig.shape[0]} refined_signal={ref.shape[0]}"
         )
 
+    return _save_binary_rows_barcode(
+        signals=[gt, orig, ref],
+        row_names=["Ground Truth", "Original", "Refined"],
+        save_path=save_path,
+    )
+
+
+def save_original_vs_refined_barcode(
+    original_signal: np.ndarray,
+    refined_signal: np.ndarray,
+    save_path: str,
+    original_name: str = "Original",
+    refined_name: str = "Refined",
+) -> str:
+    orig = _as_binary(original_signal, "original_signal", allow_probabilities=True)
+    ref = _as_binary(refined_signal, "refined_signal", allow_probabilities=True)
+    if orig.shape[0] != ref.shape[0]:
+        raise ValueError(
+            "Length mismatch for barcode plot: "
+            f"original_signal={orig.shape[0]} refined_signal={ref.shape[0]}"
+        )
+    return _save_binary_rows_barcode(
+        signals=[orig, ref],
+        row_names=[str(original_name), str(refined_name)],
+        save_path=save_path,
+    )
+
+
+def save_original_refined_gt_barcode(
+    original_signal: np.ndarray,
+    refined_signal: np.ndarray,
+    ground_truth: np.ndarray,
+    save_path: str,
+    original_name: str = "Original",
+    refined_name: str = "Refined",
+    ground_truth_name: str = "Ground Truth",
+) -> str:
+    orig = _as_binary(original_signal, "original_signal", allow_probabilities=True)
+    ref = _as_binary(refined_signal, "refined_signal", allow_probabilities=True)
+    gt = _as_binary(ground_truth, "ground_truth", allow_probabilities=False)
+    if not (orig.shape[0] == ref.shape[0] == gt.shape[0]):
+        raise ValueError(
+            "Length mismatch for barcode plot: "
+            f"original_signal={orig.shape[0]} refined_signal={ref.shape[0]} ground_truth={gt.shape[0]}"
+        )
+    return _save_binary_rows_barcode(
+        signals=[orig, ref, gt],
+        row_names=[str(original_name), str(refined_name), str(ground_truth_name)],
+        save_path=save_path,
+    )
+
+
+def save_confidence_refined_gt_barcode(
+    confidence: np.ndarray,
+    refined_signal: np.ndarray,
+    ground_truth: np.ndarray,
+    save_path: str,
+    confidence_name: str = "P(Holding)",
+    refined_name: str = "Prediction",
+    ground_truth_name: str = "Ground Truth",
+) -> str:
+    conf = np.asarray(confidence, dtype=float).reshape(-1)
+    if conf.size == 0:
+        raise ValueError("confidence must be non-empty")
+    if np.any(~np.isfinite(conf)):
+        raise ValueError("confidence must be finite")
+    if np.any((conf < 0.0) | (conf > 1.0)):
+        raise ValueError("confidence must be in [0, 1]")
+
+    ref = _as_binary(refined_signal, "refined_signal", allow_probabilities=True)
+    gt = _as_binary(ground_truth, "ground_truth", allow_probabilities=False)
+    if not (conf.shape[0] == ref.shape[0] == gt.shape[0]):
+        raise ValueError(
+            "Length mismatch for confidence barcode plot: "
+            f"confidence={conf.shape[0]} refined_signal={ref.shape[0]} ground_truth={gt.shape[0]}"
+        )
+
     out = Path(save_path).expanduser()
     out.parent.mkdir(parents=True, exist_ok=True)
-    row_names = ["Ground Truth", "Original", "Refined"]
-    signals = [gt, orig, ref]
+    plot_confidence_iterative_barcodes(
+        confidence=conf,
+        data_list=[ref, gt],
+        confidence_title=str(confidence_name),
+        titles=[str(refined_name), str(ground_truth_name)],
+        show=False,
+        save_file=str(out),
+    )
+    return str(out)
 
-    red = np.array([200, 28, 52], dtype=np.uint8)
-    green = np.array([38, 140, 47], dtype=np.uint8)
 
-    n = int(gt.shape[0])
-    left_label_px = 130
-    row_height_px = 24
-    row_gap_px = 8
-    height = len(signals) * row_height_px + (len(signals) - 1) * row_gap_px
-    width = left_label_px + n
+def _save_binary_rows_barcode(
+    signals: Iterable[np.ndarray],
+    row_names: Iterable[str],
+    save_path: str,
+) -> str:
+    signal_list = [np.asarray(sig).reshape(-1).astype(int) for sig in signals]
+    name_list = [str(name) for name in row_names]
+    if len(signal_list) != len(name_list):
+        raise ValueError("signals and row_names must have same length")
+    if len(signal_list) == 0:
+        raise ValueError("signals must be non-empty")
 
-    canvas = np.full((height, width, 3), 255, dtype=np.uint8)
-    for idx, signal in enumerate(signals):
-        y0 = idx * (row_height_px + row_gap_px)
-        colors = np.where(signal[:, None] == 1, green, red).astype(np.uint8)
-        barcode_row = np.tile(colors[None, :, :], (row_height_px, 1, 1))
-        canvas[y0:y0 + row_height_px, left_label_px:left_label_px + n] = barcode_row
+    n = int(signal_list[0].shape[0])
+    for idx, sig in enumerate(signal_list):
+        if sig.shape[0] != n:
+            raise ValueError(
+                "Length mismatch across barcode rows: "
+                f"row0={n} row{idx}={sig.shape[0]}"
+            )
 
-    image = Image.fromarray(canvas, mode="RGB")
-    draw = ImageDraw.Draw(image)
-    for idx, row_name in enumerate(row_names):
-        y0 = idx * (row_height_px + row_gap_px)
-        draw.text((8, y0 + 5), row_name, fill=(0, 0, 0))
-
-    image.save(str(out))
+    out = Path(save_path).expanduser()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    plot_iterative_barcodes(
+        data_list=signal_list,
+        titles=name_list,
+        show=False,
+        save_file=str(out),
+    )
     return str(out)
 
 

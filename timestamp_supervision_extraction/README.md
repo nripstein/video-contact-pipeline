@@ -63,10 +63,13 @@ Any frame gap (`delta != 1`) ends the current island.
 
 1. Keep islands with `length_frames >= ceil(min_island_seconds * fps)`.
 2. Blue glove veto: for label `1` islands, drop the island if any frame has `blue_glove_detected == True`.
-3. Pick one representative frame per remaining island with center-biased sampling:
-   - center `c = (L - 1) / 2`
-   - sigma `= (L - 1) / 4`
-   - sample normal, round with `np.rint`, resample while index is out of range
+3. Pick one representative frame per remaining island deterministically:
+   - selected index `i = L // 2`
+   - for odd `L`, this is the exact middle
+   - for even `L`, this is the upper-middle frame
+
+`--random_seed` is retained for CLI compatibility but is currently ignored because
+selection is deterministic.
 
 ## Outputs
 
@@ -93,3 +96,79 @@ CSV columns:
 - Fails fast on malformed CSVs, missing required columns, or missing sibling `metadata.csv`.
 - If `--extract_frames` is enabled, per-frame extraction errors are logged and processing continues.
 - Exit is non-zero only if extraction was requested and all extraction attempts failed.
+
+## Quantitative Evaluation of Selected Timestamps
+
+You can evaluate selected timestamps against GT labels in either single- or multi-dataset mode.
+
+### Single Dataset / Video
+
+```bash
+python -m timestamp_supervision_extraction.evaluate_selected_timestamps \
+  --selected-csv timestamp_supervision_extraction/outputs/selected_timestamps.csv \
+  --gt-csv /path/to/gt.csv \
+  --dataset-key demo_video \
+  --json-out timestamp_supervision_extraction/outputs/selected_metrics_demo.json
+```
+
+Accepted GT formats:
+
+- `frame_number, gt_binary`
+- `frame_id, label` where label maps to binary holding/not_holding semantics
+
+### Multi Dataset (Manifest)
+
+Create a manifest CSV with columns:
+
+- `dataset_key`
+- `selected_csv`
+- `gt_csv`
+
+Then run:
+
+```bash
+python -m timestamp_supervision_extraction.evaluate_selected_timestamps \
+  --manifest-csv /path/to/metrics_manifest.csv \
+  --output-dir /path/to/output_dir
+```
+
+Optional filtering:
+
+```bash
+python -m timestamp_supervision_extraction.evaluate_selected_timestamps \
+  --manifest-csv /path/to/metrics_manifest.csv \
+  --dataset-keys sv1,sv2,sv3 \
+  --output-dir /path/to/output_dir
+```
+
+In multi mode, the command writes:
+
+- `selected_timestamp_metrics_per_dataset.csv`
+- `selected_timestamp_metrics_summary.json`
+
+The summary JSON includes per-dataset metrics plus global summaries:
+
+- `global_micro`: pooled over all selected frames from successful datasets
+- `global_macro`: average of per-dataset metric values
+
+If some datasets fail, valid datasets are still evaluated and written to outputs; exit code is non-zero.
+
+### One-Command Baseline from Existing Run Manifest
+
+If you already have a batch run with `run_manifest.csv` and per-dataset prediction outputs
+(`detections_full.csv` + `detections_condensed.csv`), you can run confident-frame selection
+and evaluation in one command:
+
+```bash
+python scripts/run_timestamp_supervision_baseline.py \
+  --run-root /path/to/pipeline_run_root \
+  --fps 60 \
+  --min-island-seconds 1.0
+```
+
+Outputs are written under:
+
+- `/path/to/pipeline_run_root/timestamp_supervision_baseline/prep_manifest.csv`
+- `/path/to/pipeline_run_root/timestamp_supervision_baseline/selected_timestamps/`
+- `/path/to/pipeline_run_root/timestamp_supervision_baseline/evaluation/selected_timestamp_metrics_per_dataset.csv`
+- `/path/to/pipeline_run_root/timestamp_supervision_baseline/evaluation/selected_timestamp_metrics_summary.json`

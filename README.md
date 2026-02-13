@@ -79,6 +79,15 @@ Inference + condense:
 python run_pipeline.py --input /path/to/input --output-dir results/run/
 ```
 
+Condense tie-break strategy (duplicate frame labels):
+```
+# default: legacy/thesis behavior (prefers No Contact)
+python run_pipeline.py --input /path/to/input --output-dir results/run/ --condense-priority-strategy no_contact_first
+
+# refactor behavior (prefers Portable Object)
+python run_pipeline.py --input /path/to/input --output-dir results/run/ --condense-priority-strategy portable_first
+```
+
 Optional filter flags:
 ```
 # small-object filter is OFF by default; enable explicitly if desired
@@ -86,6 +95,28 @@ python run_pipeline.py --input /path/to/input --output-dir results/run/ --small-
 
 # disable small-object filter explicitly (useful for parity or reproducibility)
 python run_pipeline.py --input /path/to/input --output-dir results/run/ --no-small-object-filter
+```
+
+Optional tracking bridge (off by default):
+```
+# enable short-horizon motion-only bridge to recover detector misses
+python run_pipeline.py --input /path/to/input --output-dir results/run/ --tracking-bridge
+
+# tune bridging behavior
+python run_pipeline.py --input /path/to/input --output-dir results/run/ \
+  --tracking-bridge \
+  --tracking-max-missed-frames 8 \
+  --tracking-iou-threshold 0.15 \
+  --tracking-init-obj-confidence 0.70 \
+  --tracking-promotion-confirm-frames 2 \
+  --tracking-reassociate-iou-threshold 0.10
+
+# optional: allow Stationary Object -> Portable Object promotions on miss frames
+python run_pipeline.py --input /path/to/input --output-dir results/run/ \
+  --tracking-bridge \
+  --tracking-promote-stationary \
+  --tracking-stationary-iou-threshold 0.20 \
+  --tracking-stationary-confirm-frames 2
 ```
 
 Batch mode:
@@ -107,6 +138,61 @@ Postprocess-only (existing CSVs):
 ```
 python run_pipeline.py --barcodes-only --condensed-csv /path/to/detections_condensed.csv --output-dir results/post/
 python run_pipeline.py --annotated-frames-only --full-csv /path/to/detections_full.csv --image-dir /path/to/frames --output-dir results/post/
+```
+
+HSMM refinement with posterior probabilities + confidence barcode:
+```
+python scripts/run_hsmm_refinement.py \
+  --condensed-csv /path/to/detections_condensed.csv \
+  --gt-csv /path/to/gt.csv \
+  --k-segments 11 \
+  --alpha-during-trial 9.0 \
+  --lambda-during-trial 0.1 \
+  --alpha-between-trials 9.0 \
+  --lambda-between-trials 0.075 \
+  --fpr 0.1 \
+  --fnr 0.1 \
+  --return-posteriors \
+  --no-progress
+```
+
+With `--return-posteriors`, HSMM writes these additional artifacts under `<pred_dir>/hsmm_refinement/`:
+- `hsmm_posteriors.csv` with columns `<frame_column>, posterior_contact`
+- `barcode_confidence_refined_gt.png` (top: `P(holding)` with line overlay, middle: refined prediction barcode, bottom: GT barcode)
+
+Contact timeline video (pred vs GT, optional secondary prediction track):
+```
+python scripts/make_contact_timeline_video.py \
+  --condensed-csv /path/to/detections_condensed.csv \
+  --image-dir /path/to/frames \
+  --gt-csv /path/to/gt.csv
+
+# optional: add a second prediction timeline row for side-by-side comparison
+python scripts/make_contact_timeline_video.py \
+  --condensed-csv /path/to/new_model/detections_condensed.csv \
+  --secondary-condensed-csv /path/to/baseline/detections_condensed.csv \
+  --image-dir /path/to/frames
+```
+
+Repeatable shrunk-dataset experiment workflow (inference -> metrics -> frames_det -> videos):
+```
+python scripts/run_shrunk_full_workflow.py \
+  --run-name 2026-02-08_shrunk_baseline \
+  --profile baseline \
+  --skip-existing \
+  --no-progress
+```
+
+Experiment variants (custom inference flags):
+```
+python scripts/run_shrunk_full_workflow.py \
+  --run-name 2026-02-09_tracking_sweep \
+  --profile baseline \
+  --pipeline-arg=--tracking-bridge \
+  --pipeline-arg=--tracking-max-missed-frames \
+  --pipeline-arg=12 \
+  --recompute-all \
+  --no-progress
 ```
 
 Regression testing:

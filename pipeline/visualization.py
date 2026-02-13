@@ -15,6 +15,11 @@ from matplotlib.colors import LinearSegmentedColormap
 _RED = np.append(np.array([200, 28, 52]) / 255, np.array([1]))
 _GREEN = np.append(np.array([38, 140, 47]) / 255, np.array([1]))
 _COLOR_MAP = LinearSegmentedColormap.from_list("Custom", [_RED, _GREEN], N=2)
+_CONFIDENCE_COLOR_MAP = LinearSegmentedColormap.from_list("CustomConfidence", [_RED, _GREEN], N=256)
+
+
+def _apply_barcode_layout(fig: plt.Figure) -> None:
+    fig.subplots_adjust(left=0.08, right=0.995, top=0.97, bottom=0.12, hspace=0.35)
 
 
 def plot_barcode(gt: Optional[np.ndarray] = None,
@@ -44,7 +49,7 @@ def plot_barcode(gt: Optional[np.ndarray] = None,
         ax.set_ylabel("")
     axes[-1].set_xlabel("Frame")
 
-    fig.tight_layout()
+    _apply_barcode_layout(fig)
     if save_file:
         fig.savefig(save_file, dpi=200)
     if show:
@@ -73,7 +78,77 @@ def plot_iterative_barcodes(data_list: Iterable[np.ndarray],
         ax.set_ylabel("")
     axes[-1].set_xlabel("Frame")
 
-    fig.tight_layout()
+    _apply_barcode_layout(fig)
+    if save_file:
+        fig.savefig(save_file, dpi=200)
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
+def plot_confidence_iterative_barcodes(
+    confidence: np.ndarray,
+    data_list: Iterable[np.ndarray],
+    confidence_title: str = "P(Holding)",
+    titles: Optional[List[str]] = None,
+    show: bool = False,
+    save_file: Optional[str] = None,
+) -> None:
+    conf = np.asarray(confidence, dtype=float).reshape(-1)
+    data_list = list(data_list)
+    if conf.size == 0 or not data_list:
+        return
+
+    titles = titles or [f"series_{i}" for i in range(len(data_list))]
+    if len(titles) != len(data_list):
+        raise ValueError("titles must match data_list length")
+
+    for idx, row in enumerate(data_list):
+        arr = np.asarray(row).reshape(-1)
+        if arr.shape[0] != conf.shape[0]:
+            raise ValueError(
+                "Length mismatch for confidence barcode rows: "
+                f"confidence={conf.shape[0]} row{idx}={arr.shape[0]}"
+            )
+
+    nrows = len(data_list) + 1
+    fig, axes = plt.subplots(nrows=nrows, ncols=1, figsize=(10, max(2, nrows * 1.2)))
+    if nrows == 1:
+        axes = [axes]
+
+    conf_ax = axes[0]
+    conf_ax.imshow(
+        conf.reshape(1, -1),
+        aspect="auto",
+        cmap=_CONFIDENCE_COLOR_MAP,
+        vmin=0.0,
+        vmax=1.0,
+        interpolation="nearest",
+    )
+    conf_ax.set_yticks([0])
+    conf_ax.set_yticklabels([confidence_title])
+    conf_ax.set_xticks([])
+    conf_ax.set_ylabel("")
+
+    conf_line_ax = conf_ax.twinx()
+    conf_line_ax.plot(np.arange(conf.shape[0]), conf, color="black", linewidth=1.0)
+    conf_line_ax.set_ylim(0.0, 1.0)
+    conf_line_ax.set_xlim(-0.5, conf.shape[0] - 0.5)
+    conf_line_ax.set_yticks([])
+    conf_line_ax.set_xticks([])
+    for spine in conf_line_ax.spines.values():
+        spine.set_visible(False)
+
+    for ax, row, title in zip(axes[1:], data_list, titles):
+        data = np.asarray(row).astype(int).reshape(1, -1)
+        ax.imshow(data, aspect="auto", cmap=_COLOR_MAP, vmin=0, vmax=1, interpolation="nearest")
+        ax.set_yticks([0])
+        ax.set_yticklabels([title])
+        ax.set_xticks([])
+        ax.set_ylabel("")
+    axes[-1].set_xlabel("Frame")
+
+    _apply_barcode_layout(fig)
     if save_file:
         fig.savefig(save_file, dpi=200)
     if show:

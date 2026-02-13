@@ -43,7 +43,7 @@ class _fasterRCNN(nn.Module):
         self.RCNN_roi_align = ROIAlign((cfg.POOLING_SIZE, cfg.POOLING_SIZE), 1.0/16.0, 0)
         self.extension_layer = extension_layers.extension_layer()
 
-    def forward(self, im_data, im_info, gt_boxes, num_boxes, box_info):
+    def forward(self, im_data, im_info, gt_boxes, num_boxes, box_info, extra_rois=None):
         batch_size = im_data.size(0)
 
         im_info = im_info.data
@@ -55,6 +55,8 @@ class _fasterRCNN(nn.Module):
         base_feat = self.RCNN_base(im_data)
         # feed base feature map tp RPN to obtain rois
         rois, rpn_loss_cls, rpn_loss_bbox = self.RCNN_rpn(base_feat, im_info, gt_boxes, num_boxes)
+        if (not self.training) and extra_rois is not None:
+            rois = self._append_extra_rois(rois, extra_rois, im_info)
 
 
         # if it is training phrase, then use ground trubut bboxes for refining
@@ -131,6 +133,48 @@ class _fasterRCNN(nn.Module):
         bbox_pred = bbox_pred.view(batch_size, rois.size(1), -1)
 
         return rois, cls_prob, bbox_pred, rpn_loss_cls, rpn_loss_bbox, RCNN_loss_cls, RCNN_loss_bbox, rois_label, loss_list
+
+    def _append_extra_rois(self, rois, extra_rois, im_info):
+        if extra_rois.dim() == 2:
+            extra_rois = extra_rois.unsqueeze(0)
+        if extra_rois.dim() != 3:
+            raise ValueError("extra_rois must have shape [B, K, 4] or [B, K, 5].")
+        if extra_rois.size(0) != rois.size(0):
+            raise ValueError("extra_rois batch size must match rois batch size.")
+        if extra_rois.size(2) not in (4, 5):
+            raise ValueError("extra_rois last dimension must be 4 or 5.")
+
+        extra_rois = extra_rois.type_as(rois)
+        if extra_rois.size(2) == 4:
+            batch_size = extra_rois.size(0)
+            batch_inds = torch.arange(batch_size).type_as(extra_rois).view(batch_size, 1, 1)
+            batch_inds = batch_inds.expand(batch_size, extra_rois.size(1), 1)
+            extra_rois = torch.cat((batch_inds, extra_rois), 2)
+
+        valid_mask = (extra_rois[:, :, 3] > extra_rois[:, :, 1]) & (extra_rois[:, :, 4] > extra_rois[:, :, 2])
+        merged_rois = []
+        max_len = 0
+        for i in range(rois.size(0)):
+            extra_i = extra_rois[i][valid_mask[i]].clone()
+            if extra_i.numel() > 0:
+                extra_i[:, 0] = i
+                max_x = float(im_info[i, 1].item() - 1)
+                max_y = float(im_info[i, 0].item() - 1)
+                extra_i[:, 1].clamp_(0, max_x)
+                extra_i[:, 2].clamp_(0, max_y)
+                extra_i[:, 3].clamp_(0, max_x)
+                extra_i[:, 4].clamp_(0, max_y)
+                extra_i = extra_i[(extra_i[:, 3] > extra_i[:, 1]) & (extra_i[:, 4] > extra_i[:, 2])]
+            rois_i = rois[i]
+            merged_i = torch.cat((rois_i, extra_i), 0) if extra_i.numel() > 0 else rois_i
+            merged_rois.append(merged_i)
+            max_len = max(max_len, merged_i.size(0))
+
+        out = rois.new_zeros(rois.size(0), max_len, 5)
+        for i, merged_i in enumerate(merged_rois):
+            out[i, :, 0] = i
+            out[i, :merged_i.size(0), :] = merged_i
+        return out
 
     def enlarge_bbox(self, im_info, rois, ratio=0.5):
         rois_width, rois_height = (rois[:,:,3]-rois[:,:,1]), (rois[:,:,4]-rois[:,:,2])

@@ -134,6 +134,8 @@ def test_blue_glove_parity():
         str(NEW_OUT_DIR),
         "--no-crop",
         "--no-flip",
+        "--condense-priority-strategy",
+        "portable_first",
     ]
     subprocess.run(new_cmd, check=True, cwd=REPO_ROOT, env=env)
 

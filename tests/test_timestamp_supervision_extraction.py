@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 import sys
 
@@ -15,6 +16,7 @@ from timestamp_supervision_extraction.extract_timestamps import (
     filter_islands,
     find_islands,
     merge_predictions_and_metadata,
+    run,
     select_central_frames,
 )
 
@@ -88,7 +90,7 @@ def test_filter_islands_applies_min_length_and_blue_glove_veto():
     }
 
 
-def test_select_central_frames_reproducible_with_seed():
+def test_select_central_frames_chooses_deterministic_middle_frame():
     islands = [
         {
             "video_id": "v1",
@@ -102,6 +104,15 @@ def test_select_central_frames_reproducible_with_seed():
         {
             "video_id": "v2",
             "predicted_label": 1,
+            "island_start_frame_id": 30,
+            "island_end_frame_id": 33,
+            "island_length_frames": 4,
+            "frame_ids": list(range(30, 34)),
+            "has_blue_glove_true": False,
+        },
+        {
+            "video_id": "v3",
+            "predicted_label": 1,
             "island_start_frame_id": 5,
             "island_end_frame_id": 5,
             "island_length_frames": 1,
@@ -111,11 +122,12 @@ def test_select_central_frames_reproducible_with_seed():
     ]
 
     selections_a = select_central_frames(islands, rng=np.random.default_rng(123))
-    selections_b = select_central_frames(islands, rng=np.random.default_rng(123))
+    selections_b = select_central_frames(islands, rng=np.random.default_rng(999))
 
     assert selections_a == selections_b
-    assert 10 <= selections_a[0]["frame_id"] <= 20
-    assert selections_a[1]["frame_id"] == 5
+    assert selections_a[0]["frame_id"] == 15  # odd length -> exact middle
+    assert selections_a[1]["frame_id"] == 32  # even length -> upper middle
+    assert selections_a[2]["frame_id"] == 5
 
 
 def test_left_join_missing_metadata_treated_as_false():
@@ -193,3 +205,61 @@ def test_extract_frames_uses_single_video_flat_frames_dir(tmp_path: Path):
         / "only_video"
         / "frame_3.jpg"
     ).exists()
+
+
+def test_run_random_seed_is_no_op_for_selection(tmp_path: Path):
+    results_root = tmp_path / "results" / "vid_a"
+    results_root.mkdir(parents=True, exist_ok=True)
+
+    pd.DataFrame(
+        {
+            "frame_id": [0, 1, 2, 3],
+            "predicted_label": [1, 1, 1, 1],
+        }
+    ).to_csv(results_root / "predictions.csv", index=False)
+    pd.DataFrame(
+        {
+            "frame_id": [0, 1, 2, 3],
+            "blue_glove_detected": [False, False, False, False],
+        }
+    ).to_csv(results_root / "metadata.csv", index=False)
+
+    out_a = tmp_path / "out_a"
+    out_b = tmp_path / "out_b"
+
+    args_a = argparse.Namespace(
+        results_dir=str(tmp_path / "results"),
+        videos_dir=str(tmp_path / "videos"),
+        frames_dir=None,
+        output_dir=str(out_a),
+        fps=1.0,
+        min_island_seconds=1.0,
+        join_mode="inner",
+        random_seed=1,
+        extract_frames=False,
+        backend="opencv",
+        image_format="jpg",
+    )
+    args_b = argparse.Namespace(
+        results_dir=str(tmp_path / "results"),
+        videos_dir=str(tmp_path / "videos"),
+        frames_dir=None,
+        output_dir=str(out_b),
+        fps=1.0,
+        min_island_seconds=1.0,
+        join_mode="inner",
+        random_seed=999,
+        extract_frames=False,
+        backend="opencv",
+        image_format="jpg",
+    )
+
+    assert run(args_a) == 0
+    assert run(args_b) == 0
+
+    selected_a = pd.read_csv(out_a / "selected_timestamps.csv")
+    selected_b = pd.read_csv(out_b / "selected_timestamps.csv")
+
+    assert selected_a["frame_id"].tolist() == [2]
+    assert selected_b["frame_id"].tolist() == [2]
+    assert selected_a.equals(selected_b)

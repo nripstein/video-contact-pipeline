@@ -290,6 +290,160 @@ def _write_match_details(df: pd.DataFrame, idx: int, conf: float, obj_area: int,
     df.at[idx, "obj_match_method"] = "offset"
 
 
+def _clamp_iou_threshold(value: object, default: float) -> float:
+    try:
+        threshold = float(value)
+    except Exception:
+        threshold = default
+    if pd.isna(threshold):
+        threshold = default
+    return float(max(0.0, min(1.0, threshold)))
+
+
+def _ensure_strict_portable_columns(df: pd.DataFrame) -> None:
+    if "contact_label_raw" not in df.columns:
+        df["contact_label_raw"] = df["contact_label"]
+    if "contact_state_raw" not in df.columns:
+        df["contact_state_raw"] = df["contact_state"]
+
+    if "portable_strict_eligible" not in df.columns:
+        df["portable_strict_eligible"] = False
+    if "portable_evidence_source" not in df.columns:
+        df["portable_evidence_source"] = "none"
+    if "portable_evidence_iou" not in df.columns:
+        df["portable_evidence_iou"] = np.nan
+    if "portable_evidence_detected_conf" not in df.columns:
+        df["portable_evidence_detected_conf"] = np.nan
+    if "strict_demote_reason" not in df.columns:
+        df["strict_demote_reason"] = ""
+
+
+def _frame_tracking_bbox(frame_df: pd.DataFrame) -> Tuple[Optional[Tuple[float, float, float, float]], str]:
+    required_cols = [
+        "tracking_bbox_x1",
+        "tracking_bbox_y1",
+        "tracking_bbox_x2",
+        "tracking_bbox_y2",
+        "tracking_bbox_source",
+    ]
+    if any(col not in frame_df.columns for col in required_cols):
+        return None, "none"
+
+    source_series = frame_df["tracking_bbox_source"].dropna()
+    source = str(source_series.iloc[0]).strip().lower() if not source_series.empty else "none"
+    if source in {"", "none", "na"}:
+        return None, "none"
+
+    values = []
+    for col in required_cols[:4]:
+        series = frame_df[col].dropna()
+        if series.empty:
+            return None, source
+        values.append(float(series.iloc[0]))
+
+    bbox = (values[0], values[1], values[2], values[3])
+    if bbox[2] <= bbox[0] or bbox[3] <= bbox[1]:
+        return None, source
+    return bbox, source
+
+
+def apply_strict_portable_match_filter(full_df: pd.DataFrame, config: PipelineConfig) -> pd.DataFrame:
+    """
+    Enforces strict portable semantics:
+    - hand must be non-blue experimenter
+    - and must have valid detected object evidence (best match IoU threshold)
+      or valid tracked-object evidence (track bbox IoU threshold)
+    """
+    if full_df.empty:
+        return full_df
+
+    df = full_df.copy()
+    _ensure_strict_portable_columns(df)
+
+    detected_iou_threshold = _clamp_iou_threshold(
+        config.strict_portable_detected_iou_threshold,
+        default=0.05,
+    )
+    tracked_iou_threshold = _clamp_iou_threshold(
+        config.tracking_contact_iou_threshold,
+        default=0.15,
+    )
+
+    for _, frame_df in df.groupby("frame_id", sort=False):
+        obj_rows = frame_df[
+            (frame_df["detection_type"] == "object")
+            & (frame_df["is_filtered"] != True)
+        ]
+        tracked_bbox, _ = _frame_tracking_bbox(frame_df)
+
+        for idx, row in frame_df.iterrows():
+            if row.get("detection_type") != "hand":
+                continue
+            if row.get("is_filtered") is True:
+                continue
+
+            df.at[idx, "portable_strict_eligible"] = False
+            df.at[idx, "portable_evidence_source"] = "none"
+            df.at[idx, "portable_evidence_iou"] = np.nan
+            df.at[idx, "portable_evidence_detected_conf"] = np.nan
+            df.at[idx, "strict_demote_reason"] = ""
+
+            if _normalize_contact_label(row.get("contact_label")) != "Portable Object":
+                continue
+
+            if str(row.get("blue_glove_status", "")).strip().lower() == "experimenter":
+                df.at[idx, "contact_label"] = "No Contact"
+                df.at[idx, "contact_state"] = 0
+                df.at[idx, "strict_demote_reason"] = "blue_experimenter"
+                continue
+
+            detected_iou = None
+            detected_conf = None
+            best_detected = _best_matched_object_for_hand(row, obj_rows) if not obj_rows.empty else None
+            if best_detected is not None:
+                _, conf, _, iou, _, _ = best_detected
+                detected_conf = float(conf)
+                detected_iou = float(iou)
+                df.at[idx, "portable_evidence_detected_conf"] = detected_conf
+
+                if detected_iou >= detected_iou_threshold:
+                    df.at[idx, "portable_strict_eligible"] = True
+                    df.at[idx, "portable_evidence_source"] = "detected"
+                    df.at[idx, "portable_evidence_iou"] = detected_iou
+                    continue
+
+            tracked_iou = None
+            if tracked_bbox is not None:
+                hand_bbox = (
+                    int(row.get("bbox_x1")),
+                    int(row.get("bbox_y1")),
+                    int(row.get("bbox_x2")),
+                    int(row.get("bbox_y2")),
+                )
+                tracked_iou = _iou(hand_bbox, tracked_bbox)
+                if tracked_iou >= tracked_iou_threshold:
+                    df.at[idx, "portable_strict_eligible"] = True
+                    df.at[idx, "portable_evidence_source"] = "tracked"
+                    df.at[idx, "portable_evidence_iou"] = float(tracked_iou)
+                    continue
+
+            reasons = []
+            if detected_iou is None:
+                reasons.append("no_detected_match")
+            else:
+                reasons.append("detected_iou_below_threshold")
+            if tracked_iou is None:
+                reasons.append("no_tracked_match")
+            else:
+                reasons.append("tracked_iou_below_threshold")
+
+            df.at[idx, "contact_label"] = "No Contact"
+            df.at[idx, "contact_state"] = 0
+            df.at[idx, "strict_demote_reason"] = "|".join(reasons)
+
+    return df
+
+
 def apply_obj_bigger_than_hand_filter(full_df: pd.DataFrame, config: PipelineConfig) -> pd.DataFrame:
     """
     Relabels portable-object hand detections as No Contact when matched object is larger by ratio.
