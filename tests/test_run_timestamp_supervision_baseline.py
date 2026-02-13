@@ -165,3 +165,62 @@ def test_main_returns_nonzero_when_any_prepare_fails(tmp_path: Path):
     status_map = {str(row["dataset_key"]): str(row["status"]) for _, row in prep_df.iterrows()}
     assert status_map["sv1"] == "prepared"
     assert status_map["sv2"] == "failed"
+
+
+def test_main_supports_custom_condensed_relpath(tmp_path: Path):
+    mod = _load_module()
+    run_root = tmp_path / "run"
+    pred_dir = run_root / "predictions" / "sv1"
+    _write_prediction_outputs(pred_dir)
+
+    hsmm_dir = pred_dir / "hsmm_refinement"
+    hsmm_dir.mkdir(parents=True, exist_ok=True)
+    (pred_dir / "detections_condensed.csv").rename(hsmm_dir / "detections_condensed_hsmm.csv")
+
+    gt_csv = tmp_path / "sv1_gt.csv"
+    pd.DataFrame(
+        [
+            {"frame_number": 0, "gt_binary": 0},
+            {"frame_number": 1, "gt_binary": 0},
+            {"frame_number": 2, "gt_binary": 1},
+            {"frame_number": 3, "gt_binary": 1},
+        ]
+    ).to_csv(gt_csv, index=False)
+
+    pd.DataFrame(
+        [
+            {"dataset_key": "sv1", "pred_dir": str(pred_dir), "gt_csv": str(gt_csv), "status": "success"},
+        ]
+    ).to_csv(run_root / "run_manifest.csv", index=False)
+
+    import sys
+
+    original_argv = sys.argv
+    sys.argv = [
+        "run_timestamp_supervision_baseline.py",
+        "--run-root",
+        str(run_root),
+        "--output-dir",
+        str(run_root / "timestamp_supervision_baseline_hsmm"),
+        "--fps",
+        "1",
+        "--min-island-seconds",
+        "1",
+        "--random-seed",
+        "0",
+        "--condensed-relpath",
+        "hsmm_refinement/detections_condensed_hsmm.csv",
+        "--full-relpath",
+        "detections_full.csv",
+    ]
+    try:
+        rc = mod.main()
+    finally:
+        sys.argv = original_argv
+
+    assert rc == 0
+    prep_manifest = run_root / "timestamp_supervision_baseline_hsmm" / "prep_manifest.csv"
+    assert prep_manifest.exists()
+    prep_df = pd.read_csv(prep_manifest)
+    assert prep_df["status"].tolist() == ["prepared"]
+    assert prep_df["condensed_csv"].iloc[0].endswith("hsmm_refinement/detections_condensed_hsmm.csv")

@@ -49,6 +49,22 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Include manifest rows with status != success. Default keeps only successful rows when status exists.",
     )
+    parser.add_argument(
+        "--condensed-relpath",
+        default="detections_condensed.csv",
+        help=(
+            "Relative path from each manifest pred_dir to condensed predictions CSV "
+            "(e.g., hsmm_refinement/detections_condensed_hsmm.csv)."
+        ),
+    )
+    parser.add_argument(
+        "--full-relpath",
+        default="detections_full.csv",
+        help=(
+            "Relative path from each manifest pred_dir to full detections CSV used for glove metadata "
+            "(default: detections_full.csv)."
+        ),
+    )
     parser.add_argument("--fps", type=float, default=60.0, help="FPS for island length threshold conversion.")
     parser.add_argument(
         "--min-island-seconds",
@@ -190,14 +206,16 @@ def _prepare_extractor_inputs(
     manifest_df: pd.DataFrame,
     manifest_base_dir: Path,
     extractor_input_root: Path,
+    condensed_relpath: str,
+    full_relpath: str,
 ) -> pd.DataFrame:
     rows: List[Dict[str, object]] = []
     for _, row in manifest_df.iterrows():
         dataset_key = str(row["dataset_key"])
         pred_dir = _resolve_path(manifest_base_dir, row["pred_dir"])
         gt_csv = _resolve_path(manifest_base_dir, row["gt_csv"])
-        condensed_csv = pred_dir / "detections_condensed.csv"
-        full_csv = pred_dir / "detections_full.csv"
+        condensed_csv = pred_dir / str(condensed_relpath)
+        full_csv = pred_dir / str(full_relpath)
         dataset_out_dir = extractor_input_root / dataset_key
 
         rec: Dict[str, object] = {
@@ -334,6 +352,8 @@ def main() -> int:
         manifest_df=source_manifest,
         manifest_base_dir=manifest_csv.parent,
         extractor_input_root=extractor_input_root,
+        condensed_relpath=str(args.condensed_relpath),
+        full_relpath=str(args.full_relpath),
     )
     prep_df.to_csv(prep_manifest_csv, index=False)
 
@@ -391,6 +411,8 @@ def main() -> int:
         "join_mode": str(args.join_mode),
         "random_seed": args.random_seed,
         "strict_duplicates": bool(args.strict_duplicates),
+        "condensed_relpath": str(args.condensed_relpath),
+        "full_relpath": str(args.full_relpath),
     }
     run_state_json.write_text(json.dumps(run_state, indent=2, sort_keys=True), encoding="utf-8")
 
