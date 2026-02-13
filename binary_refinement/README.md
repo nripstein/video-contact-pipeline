@@ -9,7 +9,7 @@ Tools for refining noisy binary frame-wise contact signals and evaluating refine
 - `TransitionConstrainedDPRefiner`
   - Exact dynamic-programming strategy that enforces exactly `k` transitions and uses duration priors.
 - `HSMMKSegmentsRefiner`
-  - Exact segmental Viterbi for a left-to-right HSMM with exactly `k` segments, binary emissions (`FPR/FNR`), and Gamma duration priors.
+  - Exact segmental Viterbi for a left-to-right HSMM with alternating states, binary emissions (`FPR/FNR`), and Gamma duration priors.
   - Optional forward-backward posterior computation for frame-wise `P(holding | y)`.
 - Standard evaluation utilities:
   - `MoF`, `Edit Score`, `F1@tau`, confusion counts.
@@ -73,14 +73,16 @@ dp_cfg = TransitionDPConfig(
 identity = IdentityRefiner()
 dp = TransitionConstrainedDPRefiner(dp_cfg)
 hsmm_cfg = HSMMKSegmentsConfig(
-    k_segments=3,
+    num_trials=1,
+    start_state=0,
+    end_state=1,
+    fps=60.0,
     alpha_non_contact=40.0,
-    lambda_non_contact=4.0,
+    lambda_non_contact_per_sec=240.0,  # -> 4.0 per frame at 60 FPS
     alpha_contact=48.0,
-    lambda_contact=4.0,
+    lambda_contact_per_sec=240.0,      # -> 4.0 per frame at 60 FPS
     fpr=0.10,
     fnr=0.10,
-    start_state=0,
 )
 hsmm = HSMMKSegmentsRefiner(hsmm_cfg)
 
@@ -162,6 +164,19 @@ The barcode renderer now uses the same Matplotlib styling path as pipeline barco
 
 ## HSMM Options
 
+- segment-count API
+  - Preferred: `num_trials`, `start_state`, `end_state`.
+  - `k_segments` is still accepted for compatibility.
+  - When both are provided, they must agree.
+  - Derived `k_segments` under strict alternation:
+    - `(start=1, end=1) -> 2*num_trials - 1`
+    - `(start=1, end=0) -> 2*num_trials`
+    - `(start=0, end=1) -> 2*num_trials`
+    - `(start=0, end=0) -> 2*num_trials + 1`
+- duration priors
+  - Preferred: `lambda_non_contact_per_sec` and `lambda_contact_per_sec` with `fps`.
+  - Internal conversion: `lambda_per_frame = lambda_per_sec / fps`.
+  - Legacy frame-scale `lambda_non_contact` / `lambda_contact` are still accepted.
 - `max_segment_length_frames`
   - Hard cap on each segment duration.
   - Default is `540` (9 seconds at 60 FPS).

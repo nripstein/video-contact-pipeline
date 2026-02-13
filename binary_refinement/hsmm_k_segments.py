@@ -65,10 +65,10 @@ def _gamma_log_duration(d: int, state: int, cfg: HSMMKSegmentsConfig) -> float:
         raise ValueError(f"segment duration must be >= 1; got {d}")
     if state == 0:
         alpha = float(cfg.alpha_non_contact)
-        rate = float(cfg.lambda_non_contact)
+        rate = float(cfg.lambda_non_contact_per_frame)
     else:
         alpha = float(cfg.alpha_contact)
-        rate = float(cfg.lambda_contact)
+        rate = float(cfg.lambda_contact_per_frame)
     dur = float(d)
     return (
         alpha * math.log(rate)
@@ -311,11 +311,33 @@ class HSMMKSegmentsRefiner(BinaryRefinementStrategy):
         if max_segment_length_frames is not None:
             max_segment_length_frames = int(max_segment_length_frames)
         numba_mode = str(kwargs.get("numba_mode", self.config.numba_mode))
+        k_segments_override = kwargs.get("k_segments", self.config.k_segments)
+        if k_segments_override is not None:
+            k_segments_override = int(k_segments_override)
+        num_trials_override = kwargs.get("num_trials", self.config.num_trials)
+        if num_trials_override is not None:
+            num_trials_override = int(num_trials_override)
+        end_state_override = kwargs.get("end_state", self.config.end_state)
+        if end_state_override is not None:
+            end_state_override = int(end_state_override)
+        if ("k_segments" not in kwargs) and (("num_trials" in kwargs) or ("end_state" in kwargs)):
+            k_segments_override = None
 
         cfg = replace(
             self.config,
-            k_segments=int(kwargs.get("k_segments", self.config.k_segments)),
+            num_trials=num_trials_override,
+            k_segments=k_segments_override,
             start_state=int(kwargs.get("start_state", self.config.start_state)),
+            end_state=end_state_override,
+            fps=kwargs.get("fps", self.config.fps),
+            lambda_non_contact_per_sec=kwargs.get(
+                "lambda_non_contact_per_sec", self.config.lambda_non_contact_per_sec
+            ),
+            lambda_contact_per_sec=kwargs.get(
+                "lambda_contact_per_sec", self.config.lambda_contact_per_sec
+            ),
+            lambda_non_contact=kwargs.get("lambda_non_contact", self.config.lambda_non_contact),
+            lambda_contact=kwargs.get("lambda_contact", self.config.lambda_contact),
             max_segment_length_frames=max_segment_length_frames,
             numba_mode=numba_mode,
         )
@@ -323,12 +345,13 @@ class HSMMKSegmentsRefiner(BinaryRefinementStrategy):
 
         obs = _as_binary_observations(observations)
         n = int(obs.shape[0])
-        if cfg.k_segments > n:
+        k_resolved = int(cfg.resolved_k_segments)
+        if k_resolved > n:
             raise ValueError(
-                f"k_segments must be <= sequence length ({n}); got {cfg.k_segments}"
+                f"k_segments must be <= sequence length ({n}); got {k_resolved}"
             )
         if cfg.max_segment_length_frames is not None:
-            max_total_frames = int(cfg.k_segments) * int(cfg.max_segment_length_frames)
+            max_total_frames = int(k_resolved) * int(cfg.max_segment_length_frames)
             if n > max_total_frames:
                 raise ValueError(
                     f"No feasible segmentation: sequence length ({n}) exceeds "
@@ -352,7 +375,7 @@ class HSMMKSegmentsRefiner(BinaryRefinementStrategy):
             dur_ll_state0[d] = _gamma_log_duration(d, state=0, cfg=cfg)
             dur_ll_state1[d] = _gamma_log_duration(d, state=1, cfg=cfg)
 
-        k = int(cfg.k_segments)
+        k = int(k_resolved)
         max_segment_length = int(cfg.max_segment_length_frames) if cfg.max_segment_length_frames is not None else -1
         back = np.full((k + 1, n + 1), -1, dtype=np.int32)
         dp_prev = np.full(n + 1, -np.inf, dtype=float)
@@ -465,14 +488,19 @@ class HSMMKSegmentsRefiner(BinaryRefinementStrategy):
             objective=objective,
             metadata={
                 "method": "hsmm_k_segments_segmental_viterbi",
-                "k_segments": int(cfg.k_segments),
+                "k_segments": int(k_resolved),
+                "num_trials": int(cfg.num_trials),
                 "start_state": int(cfg.start_state),
+                "end_state": int(cfg.end_state),
+                "fps": float(cfg.fps),
                 "fpr": float(cfg.fpr),
                 "fnr": float(cfg.fnr),
                 "alpha_non_contact": float(cfg.alpha_non_contact),
-                "lambda_non_contact": float(cfg.lambda_non_contact),
+                "lambda_non_contact_per_sec": float(cfg.lambda_non_contact_per_sec),
+                "lambda_non_contact_per_frame": float(cfg.lambda_non_contact_per_frame),
                 "alpha_contact": float(cfg.alpha_contact),
-                "lambda_contact": float(cfg.lambda_contact),
+                "lambda_contact_per_sec": float(cfg.lambda_contact_per_sec),
+                "lambda_contact_per_frame": float(cfg.lambda_contact_per_frame),
                 "max_segment_length_frames": (
                     int(cfg.max_segment_length_frames) if cfg.max_segment_length_frames is not None else None
                 ),

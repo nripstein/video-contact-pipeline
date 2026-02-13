@@ -50,14 +50,49 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated label values mapped to binary 1",
     )
 
-    parser.add_argument("--k-segments", type=int, required=True, help="Exact number of HSMM segments")
+    parser.add_argument(
+        "--num-trials",
+        type=int,
+        default=None,
+        help="Number of trial segments (state=1). Preferred with --start-state/--end-state.",
+    )
+    parser.add_argument(
+        "--k-segments",
+        type=int,
+        default=None,
+        help="Legacy: exact number of HSMM segments.",
+    )
     parser.add_argument("--alpha-during-trial", type=float, required=True, help="Gamma alpha for state=1")
-    parser.add_argument("--lambda-during-trial", type=float, required=True, help="Gamma lambda for state=1")
+    parser.add_argument(
+        "--lambda-during-trial-per-sec",
+        type=float,
+        default=None,
+        help="Gamma lambda for state=1, expressed per second.",
+    )
+    parser.add_argument(
+        "--lambda-during-trial",
+        type=float,
+        default=None,
+        help="Legacy: Gamma lambda for state=1 on frame scale.",
+    )
     parser.add_argument("--alpha-between-trials", type=float, required=True, help="Gamma alpha for state=0")
-    parser.add_argument("--lambda-between-trials", type=float, required=True, help="Gamma lambda for state=0")
+    parser.add_argument(
+        "--lambda-between-trials-per-sec",
+        type=float,
+        default=None,
+        help="Gamma lambda for state=0, expressed per second.",
+    )
+    parser.add_argument(
+        "--lambda-between-trials",
+        type=float,
+        default=None,
+        help="Legacy: Gamma lambda for state=0 on frame scale.",
+    )
     parser.add_argument("--fpr", type=float, default=0.1, help="False positive rate P(y=1|x=0)")
     parser.add_argument("--fnr", type=float, default=0.1, help="False negative rate P(y=0|x=1)")
     parser.add_argument("--start-state", type=int, default=0, choices=[0, 1], help="Initial hidden state")
+    parser.add_argument("--end-state", type=int, default=None, choices=[0, 1], help="Final hidden state for alternating segments.")
+    parser.add_argument("--fps", type=float, default=None, help="Frames per second, required for per-second lambda priors.")
     parser.add_argument("--duration-weight", type=float, default=1.0, help="Weight for duration log-likelihood")
     parser.add_argument("--emission-weight", type=float, default=1.0, help="Weight for emission log-likelihood")
     parser.add_argument(
@@ -103,6 +138,84 @@ def parse_args() -> argparse.Namespace:
         help="Label to write for refined binary 0 in refined condensed CSV",
     )
     return parser.parse_args()
+
+
+def _resolve_hsmm_config_kwargs(args: argparse.Namespace) -> dict:
+    has_new_segment_api = (args.num_trials is not None) or (args.end_state is not None)
+    has_legacy_segment_api = args.k_segments is not None
+    if not has_new_segment_api and not has_legacy_segment_api:
+        raise ValueError(
+            "Provide either the new segment API (--num-trials with --start-state/--end-state) "
+            "or legacy --k-segments."
+        )
+    if has_new_segment_api and (args.num_trials is None or args.end_state is None):
+        raise ValueError("Both --num-trials and --end-state must be provided together.")
+    if args.fps is not None and float(args.fps) <= 0:
+        raise ValueError("--fps must be > 0 when provided.")
+
+    has_new_lambda = (args.lambda_during_trial_per_sec is not None) or (
+        args.lambda_between_trials_per_sec is not None
+    )
+    has_legacy_lambda = (args.lambda_during_trial is not None) or (
+        args.lambda_between_trials is not None
+    )
+    if not has_new_lambda and not has_legacy_lambda:
+        raise ValueError(
+            "Provide lambda priors using either per-second flags "
+            "(--lambda-during-trial-per-sec/--lambda-between-trials-per-sec with --fps) "
+            "or legacy frame-scale flags (--lambda-during-trial/--lambda-between-trials)."
+        )
+    if has_new_lambda and (
+        args.lambda_during_trial_per_sec is None or args.lambda_between_trials_per_sec is None
+    ):
+        raise ValueError(
+            "Provide both --lambda-during-trial-per-sec and --lambda-between-trials-per-sec."
+        )
+    if has_legacy_lambda and (
+        args.lambda_during_trial is None or args.lambda_between_trials is None
+    ):
+        raise ValueError(
+            "Provide both --lambda-during-trial and --lambda-between-trials for legacy lambdas."
+        )
+    if has_new_lambda and (args.fps is None or float(args.fps) <= 0):
+        raise ValueError("--fps must be provided and > 0 with per-second lambda priors.")
+
+    if has_new_segment_api and has_legacy_segment_api:
+        derived_k = HSMMKSegmentsConfig.derive_k_segments(
+            num_trials=int(args.num_trials),
+            start_state=int(args.start_state),
+            end_state=int(args.end_state),
+        )
+        if int(args.k_segments) != int(derived_k):
+            raise ValueError(
+                "k_segments mismatch: "
+                f"provided {int(args.k_segments)}, derived {int(derived_k)} from "
+                f"(num_trials={int(args.num_trials)}, start_state={int(args.start_state)}, end_state={int(args.end_state)})"
+            )
+
+    cfg_kwargs = {
+        "alpha_non_contact": float(args.alpha_between_trials),
+        "alpha_contact": float(args.alpha_during_trial),
+        "fpr": float(args.fpr),
+        "fnr": float(args.fnr),
+        "start_state": int(args.start_state),
+        "duration_weight": float(args.duration_weight),
+        "emission_weight": float(args.emission_weight),
+    }
+    if has_new_segment_api:
+        cfg_kwargs["num_trials"] = int(args.num_trials)
+        cfg_kwargs["end_state"] = int(args.end_state)
+    if has_legacy_segment_api:
+        cfg_kwargs["k_segments"] = int(args.k_segments)
+    if args.fps is not None:
+        cfg_kwargs["fps"] = float(args.fps)
+    if has_new_lambda:
+        cfg_kwargs["lambda_contact_per_sec"] = float(args.lambda_during_trial_per_sec)
+        cfg_kwargs["lambda_non_contact_per_sec"] = float(args.lambda_between_trials_per_sec)
+    if has_legacy_lambda:
+        cfg_kwargs["lambda_contact"] = float(args.lambda_during_trial)
+        cfg_kwargs["lambda_non_contact"] = float(args.lambda_between_trials)
+    return cfg_kwargs
 
 
 def _resolve_condensed_csv(args: argparse.Namespace) -> Path:
@@ -209,17 +322,9 @@ def main() -> int:
     original_binary = ordered[args.label_column].map(lambda x: _label_to_binary(x, positives)).astype(int).to_numpy()
     max_segment_length_frames = None if bool(args.no_max_segment_cap) else int(args.max_segment_frames)
 
+    hsmm_cfg_kwargs = _resolve_hsmm_config_kwargs(args)
     cfg = HSMMKSegmentsConfig(
-        k_segments=int(args.k_segments),
-        alpha_non_contact=float(args.alpha_between_trials),
-        lambda_non_contact=float(args.lambda_between_trials),
-        alpha_contact=float(args.alpha_during_trial),
-        lambda_contact=float(args.lambda_during_trial),
-        fpr=float(args.fpr),
-        fnr=float(args.fnr),
-        start_state=int(args.start_state),
-        duration_weight=float(args.duration_weight),
-        emission_weight=float(args.emission_weight),
+        **hsmm_cfg_kwargs,
         max_segment_length_frames=max_segment_length_frames,
         numba_mode=str(args.numba_mode),
     )
@@ -301,14 +406,20 @@ def main() -> int:
             {
                 "condensed_csv": str(condensed_csv),
                 "gt_csv": str(gt_csv),
-                "k_segments": int(args.k_segments),
+                "num_trials": int(cfg.num_trials),
+                "k_segments_derived": int(cfg.resolved_k_segments),
                 "alpha_during_trial": float(args.alpha_during_trial),
-                "lambda_during_trial": float(args.lambda_during_trial),
+                "lambda_during_trial_per_sec": float(cfg.lambda_contact_per_sec),
+                "lambda_during_trial_per_frame": float(cfg.lambda_contact_per_frame),
                 "alpha_between_trials": float(args.alpha_between_trials),
-                "lambda_between_trials": float(args.lambda_between_trials),
+                "lambda_between_trials_per_sec": float(cfg.lambda_non_contact_per_sec),
+                "lambda_between_trials_per_frame": float(cfg.lambda_non_contact_per_frame),
                 "fpr": float(args.fpr),
                 "fnr": float(args.fnr),
-                "start_state": int(args.start_state),
+                "start_state": int(cfg.start_state),
+                "end_state": int(cfg.end_state),
+                "fps": float(cfg.fps),
+                "k_segments_legacy_arg": (int(args.k_segments) if args.k_segments is not None else None),
                 "duration_weight": float(args.duration_weight),
                 "emission_weight": float(args.emission_weight),
                 "max_segment_length_frames": (

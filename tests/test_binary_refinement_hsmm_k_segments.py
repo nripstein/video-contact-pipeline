@@ -17,7 +17,7 @@ from binary_refinement.config import HSMMKSegmentsConfig
 from binary_refinement.hsmm_k_segments import HSMMKSegmentsRefiner
 
 
-def _valid_cfg(k_segments: int) -> HSMMKSegmentsConfig:
+def _valid_cfg(k_segments: int, start_state: int = 0) -> HSMMKSegmentsConfig:
     return HSMMKSegmentsConfig(
         k_segments=k_segments,
         alpha_non_contact=32.0,
@@ -26,7 +26,7 @@ def _valid_cfg(k_segments: int) -> HSMMKSegmentsConfig:
         lambda_contact=2.5,
         fpr=0.08,
         fnr=0.08,
-        start_state=0,
+        start_state=start_state,
         duration_weight=1.0,
         emission_weight=1.0,
     )
@@ -53,7 +53,11 @@ def _iter_durations(n: int, k: int, max_segment_length: Optional[int]):
 
 def _gamma_log_duration_reference(d: int, state: int, cfg: HSMMKSegmentsConfig) -> float:
     alpha = float(cfg.alpha_non_contact) if state == 0 else float(cfg.alpha_contact)
-    rate = float(cfg.lambda_non_contact) if state == 0 else float(cfg.lambda_contact)
+    rate = (
+        float(cfg.lambda_non_contact_per_frame)
+        if state == 0
+        else float(cfg.lambda_contact_per_frame)
+    )
     dur = float(d)
     return alpha * math.log(rate) - math.lgamma(alpha) + (alpha - 1.0) * math.log(dur) - rate * dur
 
@@ -74,7 +78,7 @@ def _enumerated_contact_posteriors(obs: np.ndarray, cfg: HSMMKSegmentsConfig) ->
     max_len = cfg.max_segment_length_frames
     contact_masks = []
     log_scores = []
-    for durations in _iter_durations(n=n, k=int(cfg.k_segments), max_segment_length=max_len):
+    for durations in _iter_durations(n=n, k=int(cfg.resolved_k_segments), max_segment_length=max_len):
         start = 0
         total = 0.0
         mask = np.zeros(n, dtype=float)
@@ -174,7 +178,7 @@ def test_hsmm_prefers_correct_emissions_in_easy_case():
 
 def test_hsmm_enforces_max_segment_length_on_edge_segments():
     obs = np.array([0, 0, 0, 1, 1, 1, 0], dtype=int)
-    cfg = _valid_cfg(k_segments=1)
+    cfg = _valid_cfg(k_segments=1, start_state=1)
     cfg.max_segment_length_frames = 6
 
     with pytest.raises(ValueError, match="No feasible segmentation"):
@@ -183,7 +187,7 @@ def test_hsmm_enforces_max_segment_length_on_edge_segments():
 
 def test_hsmm_with_cap_none_matches_legacy_feasibility():
     obs = np.array([0, 0, 0, 1, 1, 1, 0], dtype=int)
-    cfg = _valid_cfg(k_segments=1)
+    cfg = _valid_cfg(k_segments=1, start_state=1)
     cfg.max_segment_length_frames = None
 
     result = HSMMKSegmentsRefiner(cfg).predict(obs)
@@ -239,8 +243,7 @@ def test_hsmm_return_posteriors_shape_and_range():
 
 def test_hsmm_posteriors_match_unique_segmentation_when_k_equals_n():
     obs = np.array([0, 1, 0, 1, 1], dtype=int)
-    cfg = _valid_cfg(k_segments=obs.shape[0])
-    cfg.start_state = 1
+    cfg = _valid_cfg(k_segments=obs.shape[0], start_state=1)
     cfg.max_segment_length_frames = 1
 
     result = HSMMKSegmentsRefiner(cfg).predict(obs, return_posteriors=True)
@@ -342,3 +345,151 @@ def test_hsmm_config_rejects_invalid_values(kwargs):
     base.update(kwargs)
     with pytest.raises(ValueError):
         HSMMKSegmentsConfig(**base)
+
+
+@pytest.mark.parametrize(
+    ("num_trials", "start_state", "end_state", "expected_k"),
+    [
+        (3, 1, 1, 5),
+        (3, 1, 0, 6),
+        (3, 0, 1, 6),
+        (3, 0, 0, 7),
+    ],
+)
+def test_hsmm_config_derives_k_segments_from_trial_count(num_trials, start_state, end_state, expected_k):
+    cfg = HSMMKSegmentsConfig(
+        num_trials=num_trials,
+        start_state=start_state,
+        end_state=end_state,
+        fps=60.0,
+        alpha_non_contact=10.0,
+        lambda_non_contact_per_sec=60.0,
+        alpha_contact=10.0,
+        lambda_contact_per_sec=60.0,
+        fpr=0.1,
+        fnr=0.1,
+    )
+    assert cfg.resolved_k_segments == expected_k
+
+
+def test_hsmm_config_rejects_mismatch_when_k_and_triplet_disagree():
+    with pytest.raises(ValueError, match="k_segments mismatch"):
+        HSMMKSegmentsConfig(
+            k_segments=5,
+            num_trials=3,
+            start_state=0,
+            end_state=0,
+            fps=60.0,
+            alpha_non_contact=10.0,
+            lambda_non_contact_per_sec=60.0,
+            alpha_contact=10.0,
+            lambda_contact_per_sec=60.0,
+            fpr=0.1,
+            fnr=0.1,
+        )
+
+
+def test_hsmm_config_seconds_lambda_conversion():
+    cfg = HSMMKSegmentsConfig(
+        num_trials=2,
+        start_state=0,
+        end_state=1,
+        fps=20.0,
+        alpha_non_contact=10.0,
+        lambda_non_contact_per_sec=4.0,
+        alpha_contact=10.0,
+        lambda_contact_per_sec=6.0,
+        fpr=0.1,
+        fnr=0.1,
+    )
+    assert cfg.lambda_non_contact_per_frame == pytest.approx(0.2, abs=1e-12)
+    assert cfg.lambda_contact_per_frame == pytest.approx(0.3, abs=1e-12)
+
+
+def test_hsmm_config_rejects_zero_trials():
+    with pytest.raises(ValueError, match="num_trials must be >= 1"):
+        HSMMKSegmentsConfig(
+            num_trials=0,
+            start_state=0,
+            end_state=0,
+            fps=60.0,
+            alpha_non_contact=10.0,
+            lambda_non_contact_per_sec=60.0,
+            alpha_contact=10.0,
+            lambda_contact_per_sec=60.0,
+            fpr=0.1,
+            fnr=0.1,
+        )
+
+
+def test_hsmm_config_requires_end_state_with_num_trials():
+    with pytest.raises(ValueError, match="end_state must be provided"):
+        HSMMKSegmentsConfig(
+            num_trials=2,
+            start_state=0,
+            fps=60.0,
+            alpha_non_contact=10.0,
+            lambda_non_contact_per_sec=60.0,
+            alpha_contact=10.0,
+            lambda_contact_per_sec=60.0,
+            fpr=0.1,
+            fnr=0.1,
+        )
+
+
+def test_hsmm_config_requires_fps_with_seconds_lambdas():
+    with pytest.raises(ValueError, match="fps must be provided"):
+        HSMMKSegmentsConfig(
+            num_trials=2,
+            start_state=0,
+            end_state=1,
+            alpha_non_contact=10.0,
+            lambda_non_contact_per_sec=60.0,
+            alpha_contact=10.0,
+            lambda_contact_per_sec=60.0,
+            fpr=0.1,
+            fnr=0.1,
+        )
+
+
+def test_hsmm_new_api_path_matches_legacy_when_equivalent():
+    obs = np.array([0, 0, 1, 1, 1, 0, 0, 1, 1, 0], dtype=int)
+    cfg_old = HSMMKSegmentsConfig(
+        k_segments=4,
+        alpha_non_contact=32.0,
+        lambda_non_contact=3.2,
+        alpha_contact=30.0,
+        lambda_contact=2.5,
+        fpr=0.08,
+        fnr=0.08,
+        start_state=0,
+        duration_weight=1.0,
+        emission_weight=1.0,
+        max_segment_length_frames=6,
+        numba_mode="off",
+    )
+    cfg_new = HSMMKSegmentsConfig(
+        num_trials=2,
+        start_state=0,
+        end_state=1,
+        fps=60.0,
+        alpha_non_contact=32.0,
+        lambda_non_contact_per_sec=3.2 * 60.0,
+        alpha_contact=30.0,
+        lambda_contact_per_sec=2.5 * 60.0,
+        fpr=0.08,
+        fnr=0.08,
+        duration_weight=1.0,
+        emission_weight=1.0,
+        max_segment_length_frames=6,
+        numba_mode="off",
+    )
+
+    result_old = HSMMKSegmentsRefiner(cfg_old).predict(obs, return_posteriors=True)
+    result_new = HSMMKSegmentsRefiner(cfg_new).predict(obs, return_posteriors=True)
+
+    assert np.array_equal(result_old.sequence, result_new.sequence)
+    assert result_old.objective == pytest.approx(result_new.objective, abs=1e-10)
+    assert result_old.posteriors is not None
+    assert result_new.posteriors is not None
+    assert np.allclose(result_old.posteriors, result_new.posteriors, atol=1e-10)
